@@ -22,6 +22,14 @@ export interface Stats {
     averageScore: number | null;
     weakestCategory: { key: string; average: number } | null;
   };
+  watches: {
+    total: number;
+    active: number;
+    dueSoon: number;
+    /** Changes flagged by each watch's most recent completed scan. */
+    openChanges: number;
+    urgentChanges: number;
+  };
   jobs: {
     queued: number;
     running: number;
@@ -97,6 +105,7 @@ export function computeStats(db: Db): Stats {
       averageScore: scores.length ? Math.round(mean(scores)) : null,
       weakestCategory: weakestCategory(completeAudits),
     },
+    watches: watchStats(db),
     jobs: {
       queued: db.jobs.filter((j) => j.status === "queued").length,
       running: db.jobs.filter((j) => j.status === "running").length,
@@ -114,6 +123,34 @@ export function computeStats(db: Db): Stats {
   };
 }
 
+function watchStats(db: Db): Stats["watches"] {
+  const soon = Date.now() + 86_400_000;
+  let openChanges = 0;
+  let urgentChanges = 0;
+
+  for (const watch of db.watches) {
+    const latest = db.scans.find(
+      (s) => s.watchId === watch.id && s.status === "complete",
+    );
+    if (!latest) continue;
+    for (const signal of latest.signals) {
+      if (!signal.isChange) continue;
+      openChanges += 1;
+      if (signal.significance === "high") urgentChanges += 1;
+    }
+  }
+
+  return {
+    total: db.watches.length,
+    active: db.watches.filter((w) => w.enabled).length,
+    dueSoon: db.watches.filter(
+      (w) => w.enabled && w.nextRunAt && Date.parse(w.nextRunAt) < soon,
+    ).length,
+    openChanges,
+    urgentChanges,
+  };
+}
+
 function isDueBefore(lead: Lead, cutoff: Date): boolean {
   if (!lead.nextTouchAt) return false;
   if (!["contacted", "follow_up"].includes(lead.stage)) return false;
@@ -121,8 +158,11 @@ function isDueBefore(lead: Lead, cutoff: Date): boolean {
 }
 
 function usage(db: Db): Stats["usage"] {
-  const tokensIn = db.audits.reduce((sum, a) => sum + (a.tokensIn ?? 0), 0);
-  const tokensOut = db.audits.reduce((sum, a) => sum + (a.tokensOut ?? 0), 0);
+  // Audits and scans both report real token counts; lead research does not
+  // persist them, so this is a floor on spend, not a total.
+  const billable = [...db.audits, ...db.scans];
+  const tokensIn = billable.reduce((sum, r) => sum + (r.tokensIn ?? 0), 0);
+  const tokensOut = billable.reduce((sum, r) => sum + (r.tokensOut ?? 0), 0);
   return {
     tokensIn,
     tokensOut,

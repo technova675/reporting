@@ -56,6 +56,18 @@ queued ──claim──> running ──ok──> succeeded
 | `research_lead` | Web research + drafting for one lead | `drafted`, or `new` when no hook cleared the bar |
 | `run_audit` | Ten-surface audit for one website | Audit `complete` |
 | `advance_sequence` | Marks the next follow-up due | Lead `follow_up` |
+| `scan_competitors` | Diffs a competitor set against the last scan | Scan `complete` |
+
+### Recurring work
+
+`scan_competitors` is the first job kind that schedules itself. Every tick calls
+`scheduleDueWatches()` before claiming, which turns any enabled Watch past its
+`nextRunAt` into a Scan record plus a job. It is idempotent — a watch with a
+scan already queued or running is skipped — so overlapping ticks cannot
+double-scan and double-bill.
+
+That means recurring agents need no extra infrastructure: give the job kind a
+cadence field and enqueue it from the same place.
 
 ## What the engine will not do
 

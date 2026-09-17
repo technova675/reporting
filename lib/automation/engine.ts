@@ -2,7 +2,9 @@ import { newId, now, read, write } from "../db";
 import { hasApiKey } from "../anthropic";
 import { runAudit } from "../services/audit";
 import { researchLead } from "../services/prospect";
-import type { Db, Job, JobKind, JobLogLine, Lead } from "../types";
+import { runScan } from "../services/competitor";
+import { CADENCE_DAYS } from "../types";
+import type { Db, Job, JobKind, JobLogLine, Lead, Scan, Watch } from "../types";
 
 /**
  * The automation engine.
@@ -99,6 +101,10 @@ export async function tick(): Promise<TickResult> {
 
   inFlight = true;
   try {
+    // Standing watches become jobs here, so a scheduler hitting /tick is all
+    // the recurring infrastructure this needs.
+    await scheduleDueWatches();
+
     const claimed = await claimJobs(db.settings.concurrency);
     if (claimed.length === 0) return empty;
 
@@ -179,6 +185,9 @@ async function execute(job: Job): Promise<Outcome> {
       case "advance_sequence":
         await handleAdvanceSequence(job);
         break;
+      case "scan_competitors":
+        await handleScanCompetitors(job);
+        break;
     }
     await write((db) => {
       const j = db.jobs.find((x) => x.id === job.id);
@@ -241,6 +250,20 @@ async function failJob(job: Job, message: string): Promise<Outcome> {
       audit.status = "failed";
       audit.error = message;
       audit.updatedAt = now();
+    }
+    const scan = db.scans.find((x) => x.id === j.subjectId);
+    if (scan) {
+      scan.status = "failed";
+      scan.error = message;
+      scan.updatedAt = now();
+      const watch = db.watches.find((w) => w.id === scan.watchId);
+      if (watch) {
+        watch.error = message;
+        watch.updatedAt = now();
+        // Do not leave a failed watch stuck: put it back on its cadence so the
+        // next scheduled run retries from a clean slate.
+        watch.nextRunAt = nextRunFor(watch);
+      }
     }
     return "failed" as Outcome;
   });
@@ -374,4 +397,151 @@ export function nextTouchDate(db: Db, step: number): string | null {
 /** True when there is work the worker could pick up right now or soon. */
 export function hasPendingWork(db: Db): boolean {
   return db.jobs.some((j) => j.status === "queued" || j.status === "running");
+}
+
+/**
+ * Creates a scan job for every enabled watch that is due.
+ *
+ * Idempotent: a watch with a scan already queued or running is skipped, so
+ * several ticks landing at once cannot double-scan and double-bill.
+ */
+export async function scheduleDueWatches(): Promise<number> {
+  return write((db) => {
+    const at = Date.now();
+    let created = 0;
+
+    for (const watch of db.watches) {
+      if (!watch.enabled) continue;
+      if (watch.cadence === "manual") continue;
+      if (!watch.nextRunAt || Date.parse(watch.nextRunAt) > at) continue;
+
+      const alreadyPending = db.jobs.some(
+        (j) =>
+          j.kind === "scan_competitors" &&
+          (j.status === "queued" || j.status === "running") &&
+          db.scans.some((s) => s.id === j.subjectId && s.watchId === watch.id),
+      );
+      if (alreadyPending) continue;
+
+      queueScan(db, watch);
+      created += 1;
+    }
+
+    return created;
+  });
+}
+
+/** Creates the Scan record and its job. Shared by the scheduler and "scan now". */
+export function queueScan(db: Db, watch: Watch): Scan {
+  const previous = latestCompleteScan(db, watch.id);
+
+  const scan: Scan = {
+    id: newId("scan"),
+    watchId: watch.id,
+    createdAt: now(),
+    updatedAt: now(),
+    status: "queued",
+    isBaseline: previous === null,
+    signals: [],
+    summary: null,
+    sources: [],
+    error: null,
+    tokensIn: 0,
+    tokensOut: 0,
+    durationMs: 0,
+  };
+  db.scans.unshift(scan);
+
+  watch.nextRunAt = nextRunFor(watch);
+  watch.updatedAt = now();
+  enqueue(db, "scan_competitors", scan.id, watch.label);
+
+  return scan;
+}
+
+export function latestCompleteScan(db: Db, watchId: string): Scan | null {
+  return (
+    db.scans.find((s) => s.watchId === watchId && s.status === "complete") ??
+    null
+  );
+}
+
+export function nextRunFor(watch: Watch): string | null {
+  const days = CADENCE_DAYS[watch.cadence];
+  if (days === null) return null;
+  return new Date(Date.now() + days * 86_400_000).toISOString();
+}
+
+async function handleScanCompetitors(job: Job): Promise<void> {
+  const { watch, previous, model } = await write((db) => {
+    const scan = db.scans.find((s) => s.id === job.subjectId);
+    if (!scan) throw new Error(`Scan ${job.subjectId} no longer exists.`);
+
+    const found = db.watches.find((w) => w.id === scan.watchId);
+    if (!found) throw new Error(`Watch ${scan.watchId} no longer exists.`);
+
+    scan.status = "running";
+    scan.error = null;
+    scan.updatedAt = now();
+    appendLog(
+      db,
+      job.id,
+      "info",
+      `Scanning ${found.competitors.length} competitor${
+        found.competitors.length === 1 ? "" : "s"
+      } for ${found.clientName}.`,
+    );
+
+    // The baseline is the last *complete* scan other than this one.
+    const prior =
+      db.scans.find(
+        (s) =>
+          s.watchId === found.id && s.status === "complete" && s.id !== scan.id,
+      ) ?? null;
+
+    return {
+      watch: JSON.parse(JSON.stringify(found)) as Watch,
+      previous: prior ? (JSON.parse(JSON.stringify(prior)) as Scan) : null,
+      model: db.settings.model,
+    };
+  });
+
+  const output = await runScan(watch, previous, model);
+
+  await write((db) => {
+    const scan = db.scans.find((s) => s.id === job.subjectId);
+    if (!scan) return;
+
+    scan.status = "complete";
+    scan.signals = output.signals;
+    scan.summary = output.summary;
+    scan.sources = output.sources;
+    scan.tokensIn = output.tokensIn;
+    scan.tokensOut = output.tokensOut;
+    scan.durationMs = output.durationMs;
+    scan.updatedAt = now();
+
+    const found = db.watches.find((w) => w.id === scan.watchId);
+    if (found) {
+      found.lastRunAt = now();
+      found.lastScanId = scan.id;
+      found.scanCount += 1;
+      found.error = null;
+      found.updatedAt = now();
+      // Cadence runs from completion, not from when the job was queued. Without
+      // this, a watch the scheduler skipped (because a scan was already in
+      // flight) keeps a past due-date and re-scans the moment this one lands.
+      found.nextRunAt = found.enabled ? nextRunFor(found) : null;
+    }
+
+    const changes = output.signals.filter((s) => s.isChange).length;
+    appendLog(
+      db,
+      job.id,
+      "info",
+      changes === 0
+        ? `Quiet run — ${output.signals.length} signals, nothing changed.`
+        : `${changes} change${changes === 1 ? "" : "s"} detected across ${output.signals.length} signals.`,
+    );
+  });
 }

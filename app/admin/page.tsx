@@ -27,7 +27,7 @@ export default function OverviewPage() {
     );
   }
 
-  const { leads, audits, jobs: jobStats, usage } = stats;
+  const { leads, audits, watches, jobs: jobStats, usage } = stats;
   const funnelMax = Math.max(1, ...leads.funnel.map((f) => f.count));
   const weakest = audits.weakestCategory
     ? AUDIT_CATEGORIES.find((c) => c.key === audits.weakestCategory?.key)?.label
@@ -58,7 +58,7 @@ export default function OverviewPage() {
         </div>
       )}
 
-      <section className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <section className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-5">
         <Stat
           label="Leads"
           value={leads.total}
@@ -80,9 +80,21 @@ export default function OverviewPage() {
           }
         />
         <Stat
+          label="Competitor moves"
+          value={watches.openChanges}
+          tone={watches.urgentChanges ? "danger" : "neutral"}
+          hint={
+            watches.total === 0
+              ? "no watches yet"
+              : watches.urgentChanges
+                ? `${watches.urgentChanges} need a response`
+                : `${watches.active} watch${watches.active === 1 ? "" : "es"} active`
+          }
+        />
+        <Stat
           label="Est. API spend"
           value={`$${usage.estimatedCostUsd.toFixed(2)}`}
-          hint="Opus 5 list rates, audits only"
+          hint="Opus 5 list rates, audits and scans"
         />
       </section>
 

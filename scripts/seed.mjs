@@ -310,6 +310,62 @@ function buildLead(spec, index) {
   };
 }
 
+const WATCH_SIGNALS = [
+  {
+    competitor: "minimalistbeauty.in",
+    category: "offer",
+    headline: "Launched a first-order 20% discount sitewide",
+    detail:
+      "A sitewide banner offering 20% off the first order went up this week; it was not present at the last scan. The code is applied automatically at checkout.",
+    significance: "high",
+    evidence:
+      "Homepage banner reading 'FLAT 20% OFF YOUR FIRST ORDER' with the code pre-applied in the cart.",
+    soWhat:
+      "Decide whether to match with a first-order offer or hold the no-discount position and lean harder on the founder story.",
+    url: "https://minimalistbeauty.in",
+    isChange: true,
+  },
+  {
+    competitor: "dotandkey.com",
+    category: "ads",
+    headline: "Scaled from 4 to 19 active Meta ads, mostly UGC video",
+    detail:
+      "The Meta Ad Library shows 19 active ads against 4 at the last scan, and the new creatives are almost entirely creator-style vertical video rather than the product stills they ran before.",
+    significance: "high",
+    evidence:
+      "Meta Ad Library, 19 active ads for the page, 15 of them vertical video published within the last eight days.",
+    soWhat:
+      "Get at least two UGC video concepts into testing before their creative advantage compounds in the auction.",
+    url: "https://www.facebook.com/ads/library/",
+    isChange: true,
+  },
+  {
+    competitor: "minimalistbeauty.in",
+    category: "positioning",
+    headline: "Homepage still leads on ingredient transparency",
+    detail:
+      "Positioning is unchanged: percentage-led ingredient claims above the fold, same as the previous scan.",
+    significance: "low",
+    evidence: "Homepage hero copy identical to the baseline capture.",
+    soWhat:
+      "No action; keep the differentiation on formulation-for-Indian-climate rather than competing on transparency claims.",
+    url: "https://minimalistbeauty.in",
+    isChange: false,
+  },
+  {
+    competitor: "plumgoodness.com",
+    category: "pricing",
+    headline: "Pricing unchanged across the four overlapping SKUs",
+    detail:
+      "The four SKUs that compete directly with Nova are at the same published prices as the last scan.",
+    significance: "low",
+    evidence: "Product pages checked individually; no change versus baseline.",
+    soWhat: "No action needed this cycle.",
+    url: "https://plumgoodness.com",
+    isChange: false,
+  },
+];
+
 async function main() {
   await fs.mkdir(DATA_DIR, { recursive: true });
 
@@ -363,6 +419,78 @@ async function main() {
     durationMs: 141_000,
   };
   leads[0].auditId = auditId;
+
+  const watchId = id("watch");
+  const baselineScanId = id("scan");
+  const latestScanId = id("scan");
+
+  const watch = {
+    id: watchId,
+    createdAt: ago(10_200),
+    updatedAt: ago(95),
+    label: "Nova Skincare — competitor set",
+    clientName: "Nova Skincare",
+    competitors: [
+      "minimalistbeauty.in",
+      "dotandkey.com",
+      "plumgoodness.com",
+    ],
+    focus: ["offers", "pricing", "positioning", "ads"],
+    cadence: "weekly",
+    enabled: true,
+    nextRunAt: ahead(6),
+    lastRunAt: ago(95),
+    lastScanId: latestScanId,
+    scanCount: 2,
+    error: null,
+  };
+
+  const scans = [
+    {
+      id: latestScanId,
+      watchId,
+      createdAt: ago(97),
+      updatedAt: ago(95),
+      status: "complete",
+      isBaseline: false,
+      signals: WATCH_SIGNALS,
+      summary:
+        "Two real moves this week, both from the same direction: Minimalist put a sitewide first-order discount up, and Dot & Key went from 4 to 19 Meta ads with a near-total switch to UGC video. Plum is static. The pressure on Nova is on offer and creative format, not price.",
+      sources: [
+        "https://minimalistbeauty.in",
+        "https://dotandkey.com",
+        "https://plumgoodness.com",
+        "https://www.facebook.com/ads/library/",
+      ],
+      error: null,
+      tokensIn: 31_480,
+      tokensOut: 2_140,
+      durationMs: 96_000,
+    },
+    {
+      id: baselineScanId,
+      watchId,
+      createdAt: ago(10_140),
+      updatedAt: ago(10_138),
+      status: "complete",
+      isBaseline: true,
+      signals: WATCH_SIGNALS.filter((s) => !s.isChange).map((s) => ({
+        ...s,
+        isChange: false,
+      })),
+      summary:
+        "Baseline recorded. Minimalist leads on ingredient transparency, Dot & Key is running four static product ads, Plum's pricing on the overlapping SKUs is noted. Nothing to compare against yet.",
+      sources: [
+        "https://minimalistbeauty.in",
+        "https://dotandkey.com",
+        "https://plumgoodness.com",
+      ],
+      error: null,
+      tokensIn: 28_910,
+      tokensOut: 1_760,
+      durationMs: 88_000,
+    },
+  ];
 
   const jobs = [
     ...leads.map((lead, i) => ({
@@ -423,12 +551,35 @@ async function main() {
         { at: ago(176), level: "info", message: "Completed." },
       ],
     },
+    {
+      id: id("job"),
+      kind: "scan_competitors",
+      status: "succeeded",
+      subjectId: latestScanId,
+      subjectLabel: watch.label,
+      createdAt: ago(98),
+      startedAt: ago(97),
+      finishedAt: ago(95),
+      attempts: 1,
+      maxAttempts: 3,
+      runAfter: ago(98),
+      error: null,
+      batchId: null,
+      log: [
+        { at: ago(98), level: "info", message: `Queued scan_competitors for ${watch.label}.` },
+        { at: ago(97), level: "info", message: "Scanning 3 competitors for Nova Skincare." },
+        { at: ago(95), level: "info", message: "2 changes detected across 4 signals." },
+        { at: ago(95), level: "info", message: "Completed." },
+      ],
+    },
   ];
 
   const db = {
-    version: 3,
+    version: 4,
     leads,
     audits: [audit],
+    watches: [watch],
+    scans,
     jobs,
     batches: [],
     settings: {
@@ -444,7 +595,7 @@ async function main() {
 
   await fs.writeFile(DB_PATH, JSON.stringify(db, null, 2), "utf8");
   console.log(
-    `Seeded ${leads.length} leads, 1 audit and ${jobs.length} jobs into ${DB_PATH}.`,
+    `Seeded ${leads.length} leads, 1 audit, 1 competitor watch (${scans.length} scans) and ${jobs.length} jobs into ${DB_PATH}.`,
   );
   console.log("The worker is left paused — start it from the Automation page.");
 }

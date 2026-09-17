@@ -163,7 +163,11 @@ export interface Lead {
 /* Automation                                                          */
 /* ------------------------------------------------------------------ */
 
-export type JobKind = "research_lead" | "run_audit" | "advance_sequence";
+export type JobKind =
+  | "research_lead"
+  | "run_audit"
+  | "advance_sequence"
+  | "scan_competitors";
 
 export type JobStatus =
   | "queued"
@@ -224,7 +228,108 @@ export interface Db {
   version: number;
   leads: Lead[];
   audits: Audit[];
+  watches: Watch[];
+  scans: Scan[];
   jobs: Job[];
   batches: Batch[];
   settings: AutomationSettings;
+}
+
+/* ------------------------------------------------------------------ */
+/* Competitor intelligence                                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The second agent on the engine. A Watch is a standing instruction — "keep an
+ * eye on these three competitors for this client" — and each Scan is one run of
+ * it. What makes it a service rather than a report generator is the diff: a
+ * scan is graded against the previous one, so what surfaces is what *changed*.
+ */
+
+export const SIGNAL_CATEGORIES = [
+  "offer",
+  "pricing",
+  "positioning",
+  "ads",
+  "content",
+  "product",
+  "other",
+] as const;
+
+export type SignalCategory = (typeof SIGNAL_CATEGORIES)[number];
+
+export type Significance = "high" | "medium" | "low";
+
+export interface Signal {
+  competitor: string;
+  category: SignalCategory;
+  /** Alert-line summary, e.g. "Launched a first-order discount". */
+  headline: string;
+  detail: string;
+  significance: Significance;
+  /** What was actually observed, so a human can check the claim. */
+  evidence: string;
+  /** The recommended response — the part that makes this billable. */
+  soWhat: string;
+  url: string | null;
+  /** False when this was already true at the previous scan. */
+  isChange: boolean;
+}
+
+export const WATCH_CADENCES = ["daily", "weekly", "manual"] as const;
+export type WatchCadence = (typeof WATCH_CADENCES)[number];
+
+export const CADENCE_DAYS: Record<WatchCadence, number | null> = {
+  daily: 1,
+  weekly: 7,
+  manual: null,
+};
+
+/** What the scan is told to look at. Narrowing this makes scans cheaper. */
+export const WATCH_FOCUS = [
+  "offers",
+  "pricing",
+  "positioning",
+  "ads",
+  "content",
+  "product",
+] as const;
+
+export type WatchFocus = (typeof WATCH_FOCUS)[number];
+
+export interface Watch {
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+  label: string;
+  clientName: string;
+  /** Domains being watched. */
+  competitors: string[];
+  focus: WatchFocus[];
+  cadence: WatchCadence;
+  enabled: boolean;
+  nextRunAt: string | null;
+  lastRunAt: string | null;
+  lastScanId: string | null;
+  scanCount: number;
+  error: string | null;
+}
+
+export type ScanStatus = "queued" | "running" | "complete" | "failed";
+
+export interface Scan {
+  id: string;
+  watchId: string;
+  createdAt: string;
+  updatedAt: string;
+  status: ScanStatus;
+  /** True for the first scan of a watch — everything is new, nothing is a change. */
+  isBaseline: boolean;
+  signals: Signal[];
+  summary: string | null;
+  sources: string[];
+  error: string | null;
+  tokensIn: number;
+  tokensOut: number;
+  durationMs: number;
 }

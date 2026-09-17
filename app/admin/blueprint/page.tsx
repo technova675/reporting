@@ -122,6 +122,42 @@ export default function BlueprintPage() {
         </ol>
       </section>
 
+      <section className="card mb-5 p-5">
+        <h2 className="mb-1 text-[13px] font-semibold">Where this goes next</h2>
+        <p className="mb-4 text-[13px] text-muted">
+          Three agents run today. The rest of the roadmap splits cleanly in two,
+          and the split decides where each one gets built.
+        </p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="rounded-md border border-line bg-surface-2 p-3.5">
+            <Tag tone="accent">Research agents</Tag>
+            <p className="mt-2 text-[13px]">
+              Value is the prompt and the rule about what it may claim. Built
+              here, in code, where a change to that rule shows up in a diff.
+            </p>
+            <p className="mt-1.5 text-[12px] text-muted">
+              Auditor · Outbound · Competitor Intel · Growth Strategist ·
+              Audience · Content · Brand · CRO
+            </p>
+          </div>
+          <div className="rounded-md border border-line bg-surface-2 p-3.5">
+            <Tag tone="info">Integration agents</Tag>
+            <p className="mt-2 text-[13px]">
+              Value is the connector and the approval gate. Built in n8n, which
+              already has WhatsApp, HubSpot, Google Ads and the credential
+              handling — none of which is worth writing twice.
+            </p>
+            <p className="mt-1.5 text-[12px] text-muted">
+              WhatsApp · CRM · Reporting · Performance · Monitoring
+            </p>
+          </div>
+        </div>
+        <p className="mt-4 text-[13px] text-muted">
+          The boundary is one HTTP call: n8n asks this app for research, never
+          the other way around.
+        </p>
+      </section>
+
       <section className="card p-5">
         <h2 className="mb-3 text-[13px] font-semibold">Cost per lead</h2>
         <p className="text-[13px] text-muted">
@@ -130,7 +166,9 @@ export default function BlueprintPage() {
           full ten-surface audit costs more because it searches harder. Live
           numbers for this workspace are on the{" "}
           <b className="text-ink">Overview</b> page; they are computed from the
-          token counts each job actually reported, not estimated.
+          token counts each job actually reported, not estimated. A competitor
+          scan scales with the size of the watch — roughly three lookups per
+          competitor, per run.
         </p>
       </section>
     </div>
@@ -162,6 +200,11 @@ const AUTOMATED = [
     title: "Audits",
     detail:
       "Ten surfaces scored with a prioritized fix list, runnable standalone or attached to a lead.",
+  },
+  {
+    title: "Competitor watches",
+    detail:
+      "Standing watches re-run on a cadence and report only what changed since the last scan. A quiet week says so instead of padding.",
   },
 ];
 

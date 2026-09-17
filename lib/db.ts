@@ -31,9 +31,11 @@ export const DEFAULT_SETTINGS: AutomationSettings = {
 
 function emptyDb(): Db {
   return {
-    version: 3,
+    version: 4,
     leads: [],
     audits: [],
+    watches: [],
+    scans: [],
     jobs: [],
     batches: [],
     settings: { ...DEFAULT_SETTINGS },
