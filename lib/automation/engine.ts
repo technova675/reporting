@@ -1,5 +1,5 @@
 import { newId, now, read, write } from "../db";
-import { hasApiKey } from "../anthropic";
+import { isLlmConfigured } from "../llm";
 import { runAudit } from "../services/audit";
 import { researchLead } from "../services/prospect";
 import { runScan } from "../services/competitor";
@@ -95,8 +95,8 @@ export async function tick(): Promise<TickResult> {
   if (!db.settings.enabled) {
     return { ...empty, skipped: "Automation is paused." };
   }
-  if (!hasApiKey()) {
-    return { ...empty, skipped: "ANTHROPIC_API_KEY is not set." };
+  if (!isLlmConfigured()) {
+    return { ...empty, skipped: "LLM_API_KEY is not set." };
   }
 
   inFlight = true;
@@ -333,6 +333,8 @@ async function handleRunAudit(job: Job): Promise<void> {
     if (!audit) throw new Error(`Audit ${job.subjectId} no longer exists.`);
     audit.status = "running";
     audit.error = null;
+    audit.progressStep = 1;
+    audit.progressDetail = null;
     audit.updatedAt = now();
     appendLog(db, job.id, "info", `Auditing ${audit.inputs.website}.`);
     return {
@@ -341,7 +343,15 @@ async function handleRunAudit(job: Job): Promise<void> {
     };
   });
 
-  const output = await runAudit(inputs, model);
+  const output = await runAudit(inputs, model, (step, detail) =>
+    write((db) => {
+      const audit = db.audits.find((a) => a.id === job.subjectId);
+      if (!audit || audit.status !== "running") return;
+      audit.progressStep = step;
+      audit.progressDetail = detail;
+      audit.updatedAt = now();
+    }).catch(() => undefined),
+  );
 
   await write((db) => {
     const audit = db.audits.find((a) => a.id === job.subjectId);
@@ -352,6 +362,9 @@ async function handleRunAudit(job: Job): Promise<void> {
     audit.categories = output.categories;
     audit.topPriorities = output.topPriorities;
     audit.executiveSummary = output.executiveSummary;
+    audit.sources = output.sources;
+    audit.progressStep = undefined;
+    audit.progressDetail = null;
     audit.tokensIn = output.tokensIn;
     audit.tokensOut = output.tokensOut;
     audit.durationMs = output.durationMs;

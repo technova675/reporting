@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { DEFAULT_MODEL } from "./llm";
 import type { AutomationSettings, Db } from "./types";
 
 /**
@@ -26,7 +27,7 @@ export const DEFAULT_SETTINGS: AutomationSettings = {
   sequenceDelaysDays: [0, 3, 7],
   autoSendEnabled: false,
   dailyLeadCap: 40,
-  model: "claude-opus-5",
+  model: DEFAULT_MODEL,
 };
 
 function emptyDb(): Db {
@@ -56,6 +57,11 @@ async function load(): Promise<Db> {
       ...parsed,
       settings: { ...DEFAULT_SETTINGS, ...(parsed.settings ?? {}) },
     };
+    // Stores created before the switch to open models still name a Claude
+    // model, which no OpenAI-compatible endpoint will accept.
+    if (cache.settings.model.startsWith("claude-")) {
+      cache.settings.model = DEFAULT_MODEL;
+    }
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code !== "ENOENT") {

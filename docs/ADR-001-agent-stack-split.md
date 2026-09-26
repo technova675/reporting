@@ -16,7 +16,7 @@ Two stacks were on the table:
    human-approval nodes, credentials management, and a scheduler. Non-engineers
    can read and edit a workflow.
 2. **Owned code for everything.** This Next.js app, the job queue in
-   `lib/automation/engine.ts`, the Anthropic SDK.
+   `lib/automation/engine.ts`, and a model API.
 
 Picking one for all sixteen agents is wrong in both directions, because the
 agents are not the same kind of thing.
@@ -108,10 +108,15 @@ which half is which before building either.
 ## Notes on the tooling
 
 The original strategy document proposed the OpenAI Agents SDK as the AI layer.
-This repo uses the Anthropic SDK, because that was the existing decision when
-the console was built and because the research agents depend on the server-side
-web search tool and JSON-schema structured output working together, which is
-wired and tested here. This is not an argument that one provider is better; it
-is a note that the provider is an implementation detail behind
-`lib/anthropic.ts`, which has exactly one exported call. Swapping it is a
-one-file change, and nothing above depends on the answer.
+The console first shipped on the Anthropic SDK. It now runs on open models
+(NVIDIA Nemotron by default) through any OpenAI-compatible endpoint, so the
+research agents cost nothing to run on a free tier.
+
+That switch changed one thing structurally. Open models have no server-side
+web search, so the search and page-fetch tools are now code in this repo
+(`lib/research/web.ts`), and `lib/llm.ts` runs a tool loop followed by a
+separate JSON pass. That fits the decision above rather than cutting against
+it: what the agent is allowed to claim is now even more a matter of reviewed
+code. For example, the audit states that the ad libraries could not be read
+instead of guessing. The provider is still one file behind a single exported
+call, and nothing above depends on which one it is.

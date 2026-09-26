@@ -515,7 +515,7 @@ async function main() {
                 at: ago(575 - i * 90),
                 level: "warn",
                 message:
-                  "Rate limited by the Anthropic API — this job will be retried. Retrying in 15s.",
+                  "Rate limited by the model provider — this job will be retried. Retrying in 15s.",
               },
             ]
           : []),
@@ -589,7 +589,7 @@ async function main() {
       sequenceDelaysDays: [0, 3, 7],
       autoSendEnabled: false,
       dailyLeadCap: 40,
-      model: "claude-opus-5",
+      model: "nvidia/nemotron-3-super-120b-a12b",
     },
   };
 

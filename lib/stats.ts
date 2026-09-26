@@ -41,13 +41,16 @@ export interface Stats {
   usage: {
     tokensIn: number;
     tokensOut: number;
-    /** Rough USD at Opus 5 list rates; a sanity check, not an invoice. */
+    /**
+     * USD at the rates in LLM_INPUT_USD_PER_MTOK / LLM_OUTPUT_USD_PER_MTOK.
+     * Zero on a free tier, which is the default.
+     */
     estimatedCostUsd: number;
   };
 }
 
-const INPUT_USD_PER_TOKEN = 5 / 1_000_000;
-const OUTPUT_USD_PER_TOKEN = 25 / 1_000_000;
+const INPUT_USD_PER_TOKEN = Number(process.env.LLM_INPUT_USD_PER_MTOK ?? 0) / 1_000_000 || 0;
+const OUTPUT_USD_PER_TOKEN = Number(process.env.LLM_OUTPUT_USD_PER_MTOK ?? 0) / 1_000_000 || 0;
 
 export function computeStats(db: Db): Stats {
   const byStage = Object.fromEntries(

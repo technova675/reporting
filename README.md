@@ -9,8 +9,8 @@ An internal console for the work Adbibe does by hand today:
 - **Competitor intelligence** — standing watches that re-run on a cadence and
   report only what changed since the last scan.
 
-Both used to be single-page browser prototypes that called the Anthropic API
-from client-side JavaScript and lost everything on refresh. This is the same two
+Both used to be single-page browser prototypes that called a model API from
+client-side JavaScript and lost everything on refresh. This is the same two
 jobs with a real backend behind them: a persistent queue, a worker with retries,
 and an operator UI that survives a closed laptop.
 
@@ -18,14 +18,43 @@ and an operator UI that survives a closed laptop.
 
 ```bash
 npm install
-cp .env.example .env.local   # add ANTHROPIC_API_KEY
+cp .env.example .env.local   # add LLM_API_KEY (free, from build.nvidia.com)
 npm run dev
 ```
 
-Then open <http://localhost:3000> — `/` redirects to `/admin`.
+Then open <http://localhost:3000> — `/` redirects to `/admin`. The public
+audit page is at <http://localhost:3000/audit>. Turn the worker on
+(Automation → Start worker), or queued audits wait.
 
 Without an API key everything still loads and leads still import; jobs just sit
 in the queue and the console says so.
+
+## Models
+
+Research runs on **open models** through any OpenAI-compatible endpoint. The
+default is NVIDIA's hosted **Nemotron 3 Super** (`nvidia/nemotron-3-super-120b-a12b`)
+on the free build.nvidia.com API. Change `LLM_BASE_URL` for OpenRouter, Groq,
+or a local Ollama (no key needed); change the model in Settings.
+
+Open models have no built-in web search, so this app runs searches and reads
+pages itself (`lib/research/web.ts`). With no key it uses DuckDuckGo. That's
+fine for trying things out, but DuckDuckGo blocks a server after a few dozen
+quick queries. For real use, set `APIFY_API_TOKEN` (Apify's Google Search
+scraper — the free plan's $5 monthly credit is roughly 900 searches) or
+`TAVILY_API_KEY` (1,000 free searches a month). A search that fails goes into the report as
+"unverified", never as "nothing exists".
+
+## The public auditor
+
+- `/audit`: the free-audit form for prospects. Each audit gets a shareable
+  `/audit/[id]` page with live progress, then the report and a booking CTA
+  (`NEXT_PUBLIC_BOOKING_URL`).
+- `/auditor-standalone.html`: the same flow in one HTML file you can host on
+  any site. Set `API_BASE` inside it, and allow that origin with
+  `PUBLIC_AUDIT_ALLOWED_ORIGINS`.
+- Guard rails: 3 audits per IP per hour, 50 a day overall, a honeypot field,
+  and a block on fetching private-network addresses. The public API only
+  exposes audits created through it, and never token counts or raw errors.
 
 ## Layout
 
@@ -33,11 +62,14 @@ in the queue and the console says so.
 app/
   admin/            the console — overview, outbound, audits, automation,
                     blueprint, settings
+  audit/            the public free-audit page and shareable reports
   api/              the backend — leads, audits, automation control + tick
 lib/
   db.ts             JSON store: one writer at a time, atomic rename on write
   types.ts          every persisted shape
-  anthropic.ts      one entry point: researchJson() — web search + JSON schema
+  llm.ts            one entry point: researchJson() — tool loop + JSON report,
+                    against any OpenAI-compatible endpoint
+  research/web.ts   the tools: safe page fetch, robots/sitemap, web search
   services/
     audit.ts        the ten-surface audit prompt + schema
     prospect.ts     lead research, the hook bar, and list parsing

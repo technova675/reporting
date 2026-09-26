@@ -1,5 +1,5 @@
 import { now, read, write } from "@/lib/db";
-import { hasApiKey } from "@/lib/anthropic";
+import { isLlmConfigured, providerInfo } from "@/lib/llm";
 import { hasPendingWork } from "@/lib/automation/engine";
 import { computeStats } from "@/lib/stats";
 import type { AutomationSettings } from "@/lib/types";
@@ -9,7 +9,8 @@ export async function GET() {
   const db = await read();
   return Response.json({
     settings: db.settings,
-    hasApiKey: hasApiKey(),
+    hasApiKey: isLlmConfigured(),
+    provider: providerInfo(),
     pending: hasPendingWork(db),
     jobs: db.jobs.slice(0, 60),
     batches: db.batches.slice(0, 10),
@@ -36,7 +37,7 @@ export async function PATCH(request: Request) {
     const s = db.settings;
     if (typeof body.enabled === "boolean") s.enabled = body.enabled;
     if (typeof body.concurrency === "number") {
-      // Above ~4 the Anthropic rate limit becomes the bottleneck and jobs just
+      // Above ~4 the free-tier rate limit becomes the bottleneck and jobs just
       // burn attempts on 429s.
       s.concurrency = clamp(Math.round(body.concurrency), 1, 4);
     }

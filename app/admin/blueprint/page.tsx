@@ -240,7 +240,7 @@ const SCALE = [
   {
     title: "Raise concurrency against the rate limit",
     detail:
-      "The worker already claims jobs atomically, so more workers is a settings change. The Anthropic rate limit is the real ceiling.",
+      "The worker already claims jobs atomically, so more workers is a settings change. The model provider's rate limit is the real ceiling — tight on free tiers.",
   },
   {
     title: "Swap the JSON store for Postgres",

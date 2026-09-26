@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Adbibe AI Marketing Auditor</title>
+<!--
+  Standalone build of the Auditor — one file you can drop on any site.
+
+  The original prototype called the model API straight from the browser, which
+  only worked inside a sandbox that injected credentials, and hit a 1,000-token
+  ceiling that truncated the JSON. This version posts to the Adbibe app's
+  public audit API instead, so keys stay on the server and the audit runs in
+  the job queue with open models (NVIDIA Nemotron by default).
+
+  Served by the app at /auditor-standalone.html it works as-is. Hosted
+  anywhere else, set API_BASE below to the app's URL and allow that origin
+  with PUBLIC_AUDIT_ALLOWED_ORIGINS.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#0A0E13; --panel:#121822; --panel-2:#161E2A; --line:#232D3A;
+    --text:#E9EEF3; --muted:#8C99A8; --faint:#5A6472; --amber:#E8A33D; --amber-dim:#4A3821; --teal:#5AC8D8;
+    --red:#E8635B; --red-dim:#3A1F1E; --green:#5BC98B; --green-dim:#1B3327;
+    --font-display:'Space Grotesk',sans-serif; --font-body:'Inter',sans-serif; --font-mono:'IBM Plex Mono',monospace;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  body{ background:var(--ink); color:var(--text); font-family:var(--font-body); line-height:1.5; -webkit-font-smoothing:antialiased; }
+  .wrap{ max-width:760px; margin:0 auto; padding:26px 16px 80px; }
+  h1,h2,h3{ font-family:var(--font-display); letter-spacing:-0.01em; }
+  .top{ display:flex; align-items:center; gap:10px; margin-bottom:6px; }
+  .dot{ width:8px; height:8px; border-radius:50%; background:var(--amber); box-shadow:0 0 8px var(--amber); }
+  .brand{ font-family:var(--font-display); font-weight:700; font-size:0.95rem; }
+  .badge{ font-family:var(--font-mono); font-size:0.68rem; color:var(--amber); background:var(--amber-dim); padding:3px 9px; border-radius:20px; margin-left:6px; }
+  h1{ font-size:clamp(1.5rem,4.5vw,2rem); margin:14px 0 8px; }
+  .lede{ color:var(--muted); font-size:0.94rem; max-width:600px; margin-bottom:8px; }
+  .free-line{ font-family:var(--font-mono); font-size:0.8rem; color:var(--teal); margin-bottom:20px; }
+  .scope-row{ display:flex; flex-wrap:wrap; gap:6px; margin-bottom:24px; }
+  .scope-chip{ font-family:var(--font-mono); font-size:0.68rem; color:var(--muted); border:1px solid var(--line); padding:4px 10px; border-radius:20px; }
+
+  .card{ background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:22px; margin-bottom:18px; }
+  label{ display:block; font-family:var(--font-mono); font-size:0.72rem; text-transform:uppercase; letter-spacing:0.06em; color:var(--muted); margin-bottom:6px; }
+  .field{ margin-bottom:16px; }
+  input, textarea{ width:100%; background:var(--panel-2); border:1px solid var(--line); border-radius:8px; color:var(--text); font-family:var(--font-body); font-size:0.92rem; padding:11px 13px; outline:none; }
+  input:focus, textarea:focus{ border-color:var(--amber); }
+  input::placeholder, textarea::placeholder{ color:var(--faint); }
+  .grid2{ display:grid; grid-template-columns:1fr; gap:0 16px; }
+  @media(min-width:600px){ .grid2{ grid-template-columns:1fr 1fr; } }
+  textarea{ min-height:64px; resize:vertical; }
+  .hp{ position:absolute; left:-10000px; width:1px; height:1px; overflow:hidden; }
+  .btn{ display:inline-flex; align-items:center; justify-content:center; gap:8px; width:100%; background:var(--amber); color:#1a1305; font-weight:600; font-size:0.95rem; font-family:var(--font-body); padding:14px 20px; border:none; border-radius:8px; cursor:pointer; transition:background .15s; text-decoration:none; }
+  .btn:hover{ background:#f0b355; }
+  .btn:disabled{ opacity:.5; cursor:not-allowed; }
+  .required{ color:var(--amber); }
+  .error{ background:var(--red-dim); border:1px solid #5A2A2A; color:#F0A0A0; padding:14px 16px; border-radius:8px; font-size:0.88rem; margin-bottom:16px; }
+
+  .progress{ padding:30px 22px; }
+  .spinner{ width:34px; height:34px; margin:0 auto 18px; border-radius:50%; border:3px solid var(--line); border-top-color:var(--amber); animation:spin 0.9s linear infinite; }
+  @keyframes spin{ to{ transform:rotate(360deg); } }
+  .p-title{ text-align:center; font-family:var(--font-display); font-weight:600; font-size:1.05rem; margin-bottom:4px; }
+  .p-detail{ text-align:center; font-family:var(--font-mono); font-size:0.78rem; color:var(--muted); margin-bottom:20px; overflow-wrap:anywhere; }
+  .steps{ list-style:none; margin:0 auto; max-width:440px; }
+  .step{ display:flex; gap:10px; padding:6px 0; font-size:0.86rem; color:var(--faint); }
+  .step .mark{ width:18px; text-align:center; font-family:var(--font-mono); }
+  .step.done{ color:var(--muted); } .step.done .mark{ color:var(--green); }
+  .step.active{ color:var(--text); font-weight:500; } .step.active .mark{ color:var(--amber); }
+
+  .score-hero{ display:flex; align-items:center; gap:24px; margin-bottom:8px; flex-wrap:wrap; }
+  .score-ring{ position:relative; width:96px; height:96px; flex-shrink:0; }
+  .score-ring svg{ transform:rotate(-90deg); }
+  .score-ring .num{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-family:var(--font-mono); font-size:1.5rem; font-weight:600; }
+  .brand-name{ font-size:1.3rem; font-weight:700; font-family:var(--font-display); overflow-wrap:anywhere; }
+  .meta-line{ font-family:var(--font-mono); font-size:0.75rem; color:var(--muted); overflow-wrap:anywhere; }
+  .exec-summary{ background:var(--panel-2); border-left:3px solid var(--amber); border-radius:0 8px 8px 0; padding:16px 18px; margin:20px 0; font-size:0.92rem; line-height:1.55; }
+  .lbl{ font-family:var(--font-mono); font-size:0.68rem; color:var(--amber); text-transform:uppercase; letter-spacing:0.08em; margin-bottom:8px; }
+  .top3 h3{ font-size:0.85rem; margin-bottom:10px; }
+  .top3-item{ display:flex; gap:10px; background:var(--panel-2); border:1px solid var(--line); border-radius:8px; padding:12px 14px; margin-bottom:8px; font-size:0.88rem; }
+  .top3-num{ font-family:var(--font-mono); color:var(--amber); font-weight:700; flex-shrink:0; }
+  details.cat{ border:1px solid var(--line); border-radius:10px; margin-bottom:10px; overflow:hidden; background:var(--panel); }
+  details.cat > summary{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:14px 16px; cursor:pointer; list-style:none; }
+  details.cat > summary::-webkit-details-marker{ display:none; }
+  .cat-name{ font-size:0.94rem; font-weight:600; }
+  .cat-score{ font-family:var(--font-mono); font-size:0.82rem; }
+  .cat-chevron{ color:var(--muted); font-family:var(--font-mono); transition:transform .2s; }
+  details.cat[open] .cat-chevron{ transform:rotate(90deg); }
+  .cat-body{ padding:0 16px 6px; }
+  .finding{ padding:12px 0; border-top:1px solid var(--line); }
+  .finding-top{ display:flex; justify-content:space-between; gap:8px; margin-bottom:4px; }
+  .fld-label{ font-family:var(--font-mono); font-size:0.65rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em; }
+  .priority-tag{ font-family:var(--font-mono); font-size:0.65rem; padding:2px 8px; border-radius:20px; text-transform:uppercase; }
+  .priority-tag.high{ background:var(--red-dim); color:var(--red); }
+  .priority-tag.medium{ background:var(--amber-dim); color:var(--amber); }
+  .priority-tag.low{ background:var(--green-dim); color:var(--green); }
+  .f-problem{ font-size:0.9rem; font-weight:500; margin-bottom:6px; }
+  .f-row{ font-size:0.82rem; color:var(--muted); margin-bottom:5px; }
+  .f-row b{ color:var(--text); font-weight:500; }
+  .f-evidence{ font-size:0.78rem; color:var(--muted); font-family:var(--font-mono); background:var(--panel-2); border-radius:6px; padding:7px 9px; margin:6px 0; overflow-wrap:anywhere; }
+  .f-impact{ font-size:0.82rem; color:var(--teal); }
+  .final-summary h3{ font-size:1rem; margin-bottom:14px; }
+  .final-summary p{ font-size:0.9rem; color:var(--muted); margin-bottom:10px; line-height:1.55; }
+  .final-summary p b{ color:var(--text); }
+  .cta-box{ margin-top:24px; background:linear-gradient(135deg, var(--panel-2), var(--panel)); border:1px solid var(--amber); border-radius:12px; padding:22px; text-align:center; }
+  .cta-box h3{ font-size:1.1rem; margin-bottom:8px; }
+  .cta-box p{ color:var(--muted); font-size:0.88rem; margin-bottom:16px; }
+  .actions-bottom{ display:flex; gap:10px; flex-wrap:wrap; }
+  .btn-ghost{ flex:1; min-width:140px; background:transparent; border:1px solid var(--line); color:var(--text); padding:12px 16px; border-radius:8px; font-family:var(--font-body); font-size:0.88rem; cursor:pointer; }
+  .btn-ghost:hover{ border-color:var(--amber); color:var(--amber); }
+  .history{ margin-top:36px; }
+  .history h3{ font-size:0.8rem; text-transform:uppercase; letter-spacing:0.06em; color:var(--muted); font-family:var(--font-mono); margin-bottom:12px; }
+  .hist-item{ display:flex; justify-content:space-between; align-items:center; gap:10px; width:100%; text-align:left; padding:12px 14px; background:var(--panel); border:1px solid var(--line); border-radius:8px; margin-bottom:8px; cursor:pointer; font-size:0.86rem; color:var(--text); font-family:var(--font-body); }
+  .hist-item:hover{ border-color:var(--amber); }
+  .hist-item .name{ font-weight:500; overflow-wrap:anywhere; }
+  .hist-item .date{ color:var(--muted); font-family:var(--font-mono); font-size:0.75rem; overflow-wrap:anywhere; }
+  .hist-item .sc{ font-family:var(--font-mono); color:var(--amber); font-weight:600; flex-shrink:0; }
+  .empty-hist{ color:var(--muted); font-size:0.85rem; font-style:italic; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="top"><span class="dot"></span><span class="brand">Adbibe</span><span class="badge">FREE AUDIT</span></div>
+  <h1>AI Marketing Auditor</h1>
+  <p class="lede">One AI agent audits your entire marketing surface and hands back a prioritized fix list — problem, why it matters, priority, recommendation, and expected impact for each finding, plus what it actually saw.</p>
+  <p class="free-line">→ Get your free AI Marketing Audit</p>
+  <div class="scope-row" id="scope-row"></div>
+
+  <div id="error-view"></div>
+
+  <form id="form-view" class="card" novalidate>
+    <div class="field">
+      <label for="f-website">Website URL <span class="required">*</span></label>
+      <input id="f-website" type="text" inputmode="url" maxlength="200" placeholder="e.g. brandname.com">
+    </div>
+    <div class="grid2">
+      <div class="field">
+        <label for="f-brand">Business name</label>
+        <input id="f-brand" type="text" maxlength="120" placeholder="Brand or company name">
+      </div>
+      <div class="field">
+        <label for="f-industry">Industry</label>
+        <input id="f-industry" type="text" maxlength="120" placeholder="e.g. D2C skincare, SaaS">
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="field">
+        <label for="f-social">Instagram / social handles</label>
+        <input id="f-social" type="text" maxlength="200" placeholder="@brandname, LinkedIn page, etc.">
+      </div>
+      <div class="field">
+        <label for="f-competitors">Main competitor(s)</label>
+        <input id="f-competitors" type="text" maxlength="200" placeholder="competitor1.com, competitor2.com">
+      </div>
+    </div>
+    <div class="field">
+      <label for="f-context">Anything else worth knowing</label>
+      <textarea id="f-context" maxlength="1000" placeholder="Known ad spend, target market, specific concerns — optional"></textarea>
+    </div>
+    <div class="hp" aria-hidden="true"><label for="f-hp">Leave this empty</label><input id="f-hp" tabindex="-1" autocomplete="off"></div>
+    <button class="btn" id="run-btn" type="submit">Run full audit →</button>
+  </form>
+
+  <div id="progress-view" style="display:none;"></div>
+  <div id="result-view" style="display:none;"></div>
+
+  <div class="history" id="history-view">
+    <h3>Past audits</h3>
+    <div id="history-list"><div class="empty-hist">No audits run yet.</div></div>
+  </div>
+
+</div>
+
+<script>
+// Where the Adbibe app is running. Empty means "the server that served this file".
+const API_BASE = "";
+// Optional: a booking link for the call-to-action at the end of the report.
+const BOOKING_URL = "";
+
+const CATEGORIES = [
+  { key:"website", label:"Website & Landing Pages" },
+  { key:"seo", label:"SEO" },
+  { key:"social", label:"Social Media" },
+  { key:"google_ads", label:"Google Ads" },
+  { key:"meta_ads", label:"Meta Ads" },
+  { key:"competitors", label:"Competitors" },
+  { key:"content", label:"Content" },
+  { key:"funnel_leadgen", label:"Funnel & Lead Generation" },
+  { key:"conversion_rate", label:"Conversion Rate" },
+  { key:"brand_positioning", label:"Brand Positioning" },
+];
+
+// Must match AUDIT_STEPS in lib/types.ts.
+const STEPS = [
+  "Waiting in the queue",
+  "Reading the website & landing pages",
+  "Checking SEO basics — robots, sitemap, meta",
+  "Looking up search presence & social profiles",
+  "Checking competitors",
+  "Researching gaps — ads, content, funnel",
+  "Scoring all ten surfaces & writing the summary",
+];
+
+const HISTORY_KEY = "adbibe:audit-history";
+const POLL_MS = 4000;
+const $ = (id) => document.getElementById(id);
+let pollTimer = null;
+
+// Everything the model writes is untrusted text. Never put it in innerHTML raw.
+function esc(value){
+  return String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+}
+function safeUrl(url){ return /^https?:\/\//i.test(String(url)) ? esc(url) : null; }
+
+function scoreColor(score){
+  if(score == null) return 'var(--faint)';
+  if(score >= 70) return 'var(--green)';
+  if(score >= 45) return 'var(--amber)';
+  return 'var(--red)';
+}
+
+$('scope-row').innerHTML = CATEGORIES.map(c => `<span class="scope-chip">${esc(c.label)}</span>`).join('');
+
+function show(view){
+  $('form-view').style.display = view === 'form' ? 'block' : 'none';
+  $('progress-view').style.display = view === 'progress' ? 'block' : 'none';
+  $('result-view').style.display = view === 'result' ? 'block' : 'none';
+}
+function showError(msg){ $('error-view').innerHTML = msg ? `<div class="error" role="alert">${esc(msg)}</div>` : ''; }
+
+$('form-view').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const val = (id) => $(id).value.trim();
+  const inputs = {
+    website: val('f-website'), brand: val('f-brand'), industry: val('f-industry'),
+    social: val('f-social'), competitors: val('f-competitors'), context: val('f-context'), hp: val('f-hp'),
+  };
+  if(!inputs.website){ showError('A website URL is required to run the audit.'); return; }
+
+  showError('');
+  $('run-btn').disabled = true;
+  $('run-btn').textContent = 'Starting your audit…';
+  try{
+    const res = await fetch(`${API_BASE}/api/public/audits`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(inputs),
+    });
+    const data = await res.json().catch(() => ({}));
+    if(!res.ok) throw new Error(data.error || `Request failed (${res.status}).`);
+    if(!data.id) return;
+    remember({ id: data.id, website: inputs.website, brand: inputs.brand || null, createdAt: new Date().toISOString(), score: null, status: "queued" });
+    watch(data.id);
+  } catch(err){
+    showError(err.message || 'The audit could not be started. Please try again.');
+  } finally {
+    $('run-btn').disabled = false;
+    $('run-btn').textContent = 'Run full audit →';
+  }
+});
+
+function watch(id){
+  clearInterval(pollTimer);
+  show('progress');
+  renderProgress({ progressStep: 0, website: '' }, false);
+  const poll = async () => {
+    try{
+      const res = await fetch(`${API_BASE}/api/public/audits/${encodeURIComponent(id)}`, { cache: "no-store" });
+      if(res.status === 404){ clearInterval(pollTimer); forget(id); show('form'); showError('That audit no longer exists.'); return; }
+      if(!res.ok) return;
+      const { audit, paused } = await res.json();
+      remember({ id: audit.id, website: audit.website, brand: audit.brandName, createdAt: audit.createdAt, score: audit.overallScore, status: audit.status });
+      if(audit.status === 'complete'){ clearInterval(pollTimer); renderResult(audit); }
+      else if(audit.status === 'failed'){ clearInterval(pollTimer); show('form'); showError(`The audit of ${audit.website} could not be completed — the model service was busy. Please try again.`); }
+      else renderProgress(audit, paused);
+    } catch(e){ /* transient; next poll retries */ }
+  };
+  poll();
+  pollTimer = setInterval(poll, POLL_MS);
+}
+
+function renderProgress(audit, paused){
+  const step = audit.progressStep || 0;
+  const detail = step === 0
+    ? (paused ? 'The audit worker is paused — this starts as soon as it resumes.'
+       : audit.queuePosition > 1 ? `${audit.queuePosition - 1} audit(s) ahead of this one.` : 'Starting shortly.')
+    : (audit.progressDetail || 'A full audit takes two to four minutes.');
+  $('progress-view').innerHTML = `
+    <div class="card progress" aria-live="polite">
+      <div class="spinner"></div>
+      <p class="p-title">${esc(STEPS[step] || 'Working…')}</p>
+      <p class="p-detail">${esc(detail)}</p>
+      <ol class="steps">
+        ${STEPS.slice(1).map((label, i) => {
+          const idx = i + 1;
+          const state = idx < step ? 'done' : idx === step ? 'active' : '';
+          return `<li class="step ${state}"><span class="mark">${state === 'done' ? '✓' : state === 'active' ? '›' : '·'}</span>${esc(label)}</li>`;
+        }).join('')}
+      </ol>
+    </div>`;
+}
+
+function renderResult(r){
+  show('result');
+  const score = r.overallScore ?? 0;
+  const circumference = 2 * Math.PI * 40;
+  const offset = circumference - (score / 100) * circumference;
+  const color = scoreColor(score);
+  const brand = r.brandName || r.website;
+  const byKey = {};
+  (r.categories || []).forEach(c => byKey[c.key] = c);
+  const priorities = r.topPriorities || [];
+  const sources = (r.sources || []).map(safeUrl).filter(Boolean);
+
+  const catHtml = CATEGORIES.map((def) => {
+    const c = byKey[def.key];
+    if(!c) return '';
+    return `
+      <details class="cat">
+        <summary>
+          <span class="cat-name">${esc(def.label)}</span>
+          <span style="display:flex; align-items:center; gap:10px;">
+            <span class="cat-score" style="color:${scoreColor(c.score)}">${esc(c.score)}/100</span>
+            <span class="cat-chevron">›</span>
+          </span>
+        </summary>
+        <div class="cat-body">
+          ${(c.findings || []).map(f => `
+            <div class="finding">
+              <div class="finding-top">
+                <span class="fld-label">Problem</span>
+                <span class="priority-tag ${['high','medium','low'].includes(f.priority) ? f.priority : 'medium'}">${esc(f.priority)}</span>
+              </div>
+              <div class="f-problem">${esc(f.problem)}</div>
+              <div class="f-row"><b>Why: </b>${esc(f.why)}</div>
+              <div class="f-row"><b>Fix: </b>${esc(f.recommendation)}</div>
+              ${f.evidence ? `<div class="f-evidence"><span class="fld-label">Seen · </span>${esc(f.evidence)}</div>` : ''}
+              <div class="f-impact">↗ ${esc(f.expected_impact)}</div>
+            </div>`).join('') || '<div class="f-row" style="padding-top:10px;">No findings recorded for this category.</div>'}
+        </div>
+      </details>`;
+  }).join('');
+
+  $('result-view').innerHTML = `
+    <div class="card">
+      <div class="score-hero">
+        <div class="score-ring">
+          <svg width="96" height="96">
+            <circle cx="48" cy="48" r="40" stroke="var(--line)" stroke-width="8" fill="none"/>
+            <circle cx="48" cy="48" r="40" stroke="${color}" stroke-width="8" fill="none"
+              stroke-dasharray="${circumference}" stroke-dashoffset="${offset}" stroke-linecap="round"/>
+          </svg>
+          <div class="num" style="color:${color}">${esc(score)}</div>
+        </div>
+        <div style="min-width:0; flex:1;">
+          <div class="brand-name">${esc(brand)}</div>
+          <div class="meta-line">${esc(r.website)} · ${esc(new Date(r.createdAt).toLocaleDateString())}</div>
+        </div>
+      </div>
+      ${r.executiveSummary ? `<div class="exec-summary"><div class="lbl">Executive Summary</div>${esc(r.executiveSummary)}</div>` : ''}
+      <div class="top3">
+        <h3>Top 3 priorities</h3>
+        ${priorities.map((p,i) => `<div class="top3-item"><span class="top3-num">${i+1}</span><span>${esc(p)}</span></div>`).join('')}
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 style="font-size:0.95rem; margin-bottom:14px;">Full audit — 10 categories</h2>
+      ${catHtml}
+    </div>
+
+    <div class="card final-summary">
+      <h3>Summary of everything</h3>
+      <p><b>Overall:</b> ${esc(brand)} scores ${esc(score)}/100 across website, SEO, social, ads, competitors, content, funnel, conversion, and brand positioning.</p>
+      ${r.executiveSummary ? `<p>${esc(r.executiveSummary)}</p>` : ''}
+      ${priorities.length ? `<p><b>Start with:</b> ${priorities.map(esc).join(' → ')}</p>` : ''}
+      ${sources.length ? `<details><summary class="fld-label" style="cursor:pointer">${sources.length} sources checked</summary><ul style="margin:10px 0 0 18px; font-size:0.78rem; color:var(--muted)">${sources.map(u => `<li><a href="${u}" target="_blank" rel="noopener noreferrer nofollow" style="color:var(--teal); overflow-wrap:anywhere">${u}</a></li>`).join('')}</ul></details>` : ''}
+    </div>
+
+    <div class="cta-box">
+      <h3>Ready to fix these?</h3>
+      <p>This audit is the first step of Adbibe's Growth Audit tier. Book a free 15-minute strategy call to turn these findings into a plan.</p>
+      <div class="actions-bottom">
+        ${safeUrl(BOOKING_URL) ? `<a class="btn" style="flex:1; min-width:180px" href="${safeUrl(BOOKING_URL)}" target="_blank" rel="noopener noreferrer">Book a free strategy call →</a>` : ''}
+        <button class="btn-ghost" type="button" id="again-btn">Run another audit</button>
+      </div>
+    </div>`;
+  $('again-btn').addEventListener('click', () => { show('form'); showError(''); });
+}
+
+/* ---- per-browser history: best effort, the audits live on the server ---- */
+
+function readHistory(){
+  try{ const list = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]'); return Array.isArray(list) ? list : []; }
+  catch(e){ return []; }
+}
+function writeHistory(list){
+  try{ localStorage.setItem(HISTORY_KEY, JSON.stringify(list.slice(0, 20))); } catch(e){ /* storage unavailable */ }
+  renderHistory();
+}
+function remember(entry){ writeHistory([entry, ...readHistory().filter(e => e.id !== entry.id)]); }
+function forget(id){ writeHistory(readHistory().filter(e => e.id !== id)); }
+
+function renderHistory(){
+  const list = readHistory();
+  const el = $('history-list');
+  if(list.length === 0){ el.innerHTML = '<div class="empty-hist">No audits run yet.</div>'; return; }
+  el.innerHTML = list.map(rec => `
+    <button type="button" class="hist-item" data-id="${esc(rec.id)}">
+      <div style="min-width:0"><div class="name">${esc(rec.brand || rec.website)}</div><div class="date">${esc(new Date(rec.createdAt).toLocaleDateString())} · ${esc(rec.website)}${rec.status !== 'complete' ? ' · ' + esc(rec.status) : ''}</div></div>
+      <div class="sc" style="color:${scoreColor(rec.score)}">${esc(rec.score ?? '—')}</div>
+    </button>`).join('');
+  el.querySelectorAll('.hist-item').forEach(btn => btn.addEventListener('click', () => { showError(''); watch(btn.dataset.id); }));
+}
+
+renderHistory();
+</script>
+</body>
+</html>

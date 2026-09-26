@@ -1,4 +1,6 @@
-import { researchJson } from "../anthropic";
+import { researchJson } from "../llm";
+import type { Evidence } from "../llm";
+import { fetchPage } from "../research/web";
 import { SERVICES } from "../types";
 import type { Lead, LeadDrafts, LeadResearch } from "../types";
 
@@ -97,7 +99,7 @@ ${known.join("\n")}
 Check, in order, stopping once you have a hook strong enough to clear the bar:
 1. The website — what they sell, who to, and what the site asks a visitor to do. Look for a visible tracking pixel, a lead capture, and how the offer is framed.
 2. Their Instagram and LinkedIn — posting cadence, engagement, format mix.
-3. Meta Ad Library and Google Ads Transparency Center — are they running paid, since when, and how much creative variation is in the library?
+3. Paid media signals — a Meta Pixel, Google Ads or TikTok tag in the site HTML shows they can run paid. The ad libraries themselves cannot be read by this system, so never claim what is or is not in them.
 
 Then pick the ONE Adbibe service that most directly addresses what you found, and write the email and the LinkedIn message around that single observation.`;
 }
@@ -106,13 +108,22 @@ export async function researchLead(
   lead: Lead,
   model: string,
 ): Promise<ProspectOutput> {
+  // The website is always step one, so read it in code rather than spend a
+  // tool call on it.
+  const evidence: Evidence = { entries: [], sources: [] };
+  if (lead.website) {
+    const page = await fetchPage(lead.website);
+    evidence.entries.push({ label: "Lead website", text: page.text });
+    if (page.ok) evidence.sources.push(page.url);
+  }
+
   const result = await researchJson<RawProspect>({
     system: SYSTEM,
     prompt: buildProspectPrompt(lead),
     schema: PROSPECT_SCHEMA,
     model,
-    maxSearches: 8,
-    effort: "medium",
+    maxSearches: 6,
+    evidence,
   });
 
   const raw = result.data;

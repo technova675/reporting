@@ -1,6 +1,5 @@
-import { newId, now, read, write } from "@/lib/db";
-import { enqueue } from "@/lib/automation/engine";
-import type { Audit, AuditInputs } from "@/lib/types";
+import { now, read, write } from "@/lib/db";
+import { createAudit, parseAuditInputs } from "@/lib/auditRequests";
 
 export async function GET() {
   const db = await read();
@@ -13,58 +12,26 @@ export async function GET() {
   });
 }
 
-interface CreateBody extends AuditInputs {
-  leadId?: string;
-}
-
 export async function POST(request: Request) {
-  let body: CreateBody;
+  let body: Record<string, unknown>;
   try {
-    body = (await request.json()) as CreateBody;
+    body = (await request.json()) as Record<string, unknown>;
   } catch {
     return Response.json({ error: "Request body must be JSON." }, { status: 400 });
   }
 
-  const website = (body.website ?? "").trim();
-  if (!website) {
-    return Response.json(
-      { error: "A website is required to run an audit." },
-      { status: 400 },
-    );
+  const parsed = parseAuditInputs(body);
+  if ("error" in parsed) {
+    return Response.json({ error: parsed.error }, { status: 400 });
   }
-
-  const inputs: AuditInputs = {
-    website: website.replace(/^https?:\/\//i, "").replace(/\/$/, ""),
-    brand: body.brand?.trim() || undefined,
-    industry: body.industry?.trim() || undefined,
-    social: body.social?.trim() || undefined,
-    competitors: body.competitors?.trim() || undefined,
-    context: body.context?.trim() || undefined,
-  };
+  const { inputs } = parsed;
+  const leadId = typeof body.leadId === "string" ? body.leadId : null;
 
   const audit = await write((db) => {
-    const record: Audit = {
-      id: newId("audit"),
-      createdAt: now(),
-      updatedAt: now(),
-      status: "queued",
-      inputs,
-      brandName: inputs.brand ?? null,
-      overallScore: null,
-      categories: [],
-      topPriorities: [],
-      executiveSummary: null,
-      error: null,
-      leadId: body.leadId ?? null,
-      tokensIn: 0,
-      tokensOut: 0,
-      durationMs: 0,
-    };
-    db.audits.unshift(record);
-    enqueue(db, "run_audit", record.id, inputs.brand || inputs.website);
+    const record = createAudit(db, inputs, leadId ? "outbound" : "console", leadId);
 
-    if (body.leadId) {
-      const lead = db.leads.find((l) => l.id === body.leadId);
+    if (leadId) {
+      const lead = db.leads.find((l) => l.id === leadId);
       if (lead) {
         lead.auditId = record.id;
         lead.updatedAt = now();

@@ -24,6 +24,8 @@ import type { Stats } from "@/lib/stats";
 interface Snapshot {
   settings: AutomationSettings | null;
   hasApiKey: boolean;
+  /** Where research goes: model endpoint host and web search provider. */
+  provider: { endpoint: string; search: string } | null;
   pending: boolean;
   jobs: Job[];
   batches: Batch[];
@@ -45,6 +47,7 @@ interface AutomationContextValue extends Snapshot {
 const EMPTY: Snapshot = {
   settings: null,
   hasApiKey: false,
+  provider: null,
   pending: false,
   jobs: [],
   batches: [],

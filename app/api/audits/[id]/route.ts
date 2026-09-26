@@ -26,6 +26,8 @@ export async function POST(
     if (!found) return null;
     found.status = "queued";
     found.error = null;
+    found.progressStep = 0;
+    found.progressDetail = null;
     found.updatedAt = now();
     enqueue(db, "run_audit", found.id, found.inputs.brand || found.inputs.website);
     return found;

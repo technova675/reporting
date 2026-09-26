@@ -1,0 +1,708 @@
+/*
+ * The Auditor look — dark ink, one amber accent, Space Grotesk for display and
+ * IBM Plex Mono for labels. Scoped under `.auditor` so the rest of the console
+ * keeps its own quieter design.
+ *
+ * Public pages force the dark palette with data-theme="dark"; inside the admin
+ * console the palette follows the system theme like everything else there.
+ */
+
+.auditor {
+  --au-ink: #fbf8f3;
+  --au-panel: #ffffff;
+  --au-panel-2: #f6f1e8;
+  --au-line: #e6dfd3;
+  --au-text: #1b1712;
+  --au-muted: #6b6358;
+  --au-faint: #978e82;
+  --au-amber: #a8680a;
+  --au-amber-hover: #8f5808;
+  --au-amber-dim: #f7e7cc;
+  --au-on-amber: #ffffff;
+  --au-teal: #1f7582;
+  --au-red: #b3342c;
+  --au-red-dim: #fbe6e4;
+  --au-green: #1c7a4b;
+  --au-green-dim: #e1f3e8;
+
+  --au-display: var(--font-space-grotesk), ui-sans-serif, system-ui, sans-serif;
+  --au-body: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --au-mono: var(--font-plex-mono), ui-monospace, "Cascadia Mono", Menlo, monospace;
+
+  color: var(--au-text);
+  font-family: var(--au-body);
+  line-height: 1.5;
+}
+
+@media (prefers-color-scheme: dark) {
+  .auditor:not([data-theme="light"]) {
+    --au-ink: #0a0e13;
+    --au-panel: #121822;
+    --au-panel-2: #161e2a;
+    --au-line: #232d3a;
+    --au-text: #e9eef3;
+    --au-muted: #8c99a8;
+    --au-faint: #5a6472;
+    --au-amber: #e8a33d;
+    --au-amber-hover: #f0b355;
+    --au-amber-dim: #4a3821;
+    --au-on-amber: #1a1305;
+    --au-teal: #5ac8d8;
+    --au-red: #e8635b;
+    --au-red-dim: #3a1f1e;
+    --au-green: #5bc98b;
+    --au-green-dim: #1b3327;
+  }
+}
+
+.auditor[data-theme="dark"] {
+  --au-ink: #0a0e13;
+  --au-panel: #121822;
+  --au-panel-2: #161e2a;
+  --au-line: #232d3a;
+  --au-text: #e9eef3;
+  --au-muted: #8c99a8;
+  --au-faint: #5a6472;
+  --au-amber: #e8a33d;
+  --au-amber-hover: #f0b355;
+  --au-amber-dim: #4a3821;
+  --au-on-amber: #1a1305;
+  --au-teal: #5ac8d8;
+  --au-red: #e8635b;
+  --au-red-dim: #3a1f1e;
+  --au-green: #5bc98b;
+  --au-green-dim: #1b3327;
+}
+
+.au-page {
+  min-height: 100vh;
+  background: var(--au-ink);
+}
+.au-wrap {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 26px 16px 80px;
+}
+
+.auditor h1,
+.auditor h2,
+.auditor h3 {
+  font-family: var(--au-display);
+  letter-spacing: -0.01em;
+}
+
+/* ---- header -------------------------------------------------------- */
+
+.au-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.au-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--au-amber);
+  box-shadow: 0 0 8px var(--au-amber);
+}
+.au-brand {
+  font-family: var(--au-display);
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+.au-badge {
+  font-family: var(--au-mono);
+  font-size: 0.68rem;
+  color: var(--au-amber);
+  background: var(--au-amber-dim);
+  padding: 3px 9px;
+  border-radius: 20px;
+  margin-left: 6px;
+}
+.au-title {
+  font-size: clamp(1.5rem, 4.5vw, 2rem);
+  font-weight: 700;
+  margin: 14px 0 8px;
+}
+.au-lede {
+  color: var(--au-muted);
+  font-size: 0.94rem;
+  max-width: 600px;
+  margin-bottom: 8px;
+}
+.au-free-line {
+  font-family: var(--au-mono);
+  font-size: 0.8rem;
+  color: var(--au-teal);
+  margin-bottom: 20px;
+}
+.au-scope-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 24px;
+}
+.au-chip {
+  font-family: var(--au-mono);
+  font-size: 0.68rem;
+  color: var(--au-muted);
+  border: 1px solid var(--au-line);
+  padding: 4px 10px;
+  border-radius: 20px;
+}
+
+/* ---- cards & form -------------------------------------------------- */
+
+.au-card {
+  background: var(--au-panel);
+  border: 1px solid var(--au-line);
+  border-radius: 12px;
+  padding: 22px;
+  margin-bottom: 18px;
+}
+.au-label {
+  display: block;
+  font-family: var(--au-mono);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--au-muted);
+  margin-bottom: 6px;
+}
+.au-required {
+  color: var(--au-amber);
+}
+.au-field {
+  margin-bottom: 16px;
+}
+.au-input {
+  width: 100%;
+  background: var(--au-panel-2);
+  border: 1px solid var(--au-line);
+  border-radius: 8px;
+  color: var(--au-text);
+  font-family: var(--au-body);
+  font-size: 0.92rem;
+  padding: 11px 13px;
+  outline: none;
+}
+.au-input:focus {
+  border-color: var(--au-amber);
+}
+.au-input::placeholder {
+  color: var(--au-faint);
+}
+textarea.au-input {
+  min-height: 64px;
+  resize: vertical;
+}
+.au-grid2 {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0 16px;
+}
+@media (min-width: 600px) {
+  .au-grid2 {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+/* Honeypot: off-screen rather than display:none, which some bots detect. */
+.au-hp {
+  position: absolute;
+  left: -10000px;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
+
+.au-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  background: var(--au-amber);
+  color: var(--au-on-amber);
+  font-weight: 600;
+  font-size: 0.95rem;
+  font-family: var(--au-body);
+  padding: 14px 20px;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s;
+  text-decoration: none;
+}
+.au-btn:hover {
+  background: var(--au-amber-hover);
+}
+.au-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.au-btn-ghost {
+  flex: 1;
+  min-width: 140px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid var(--au-line);
+  color: var(--au-text);
+  padding: 12px 16px;
+  border-radius: 8px;
+  font-family: var(--au-body);
+  font-size: 0.88rem;
+  cursor: pointer;
+  text-decoration: none;
+}
+.au-btn-ghost:hover {
+  border-color: var(--au-amber);
+  color: var(--au-amber);
+}
+.au-btn-ghost:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.au-error {
+  background: var(--au-red-dim);
+  border: 1px solid color-mix(in srgb, var(--au-red) 40%, transparent);
+  color: var(--au-red);
+  padding: 14px 16px;
+  border-radius: 8px;
+  font-size: 0.88rem;
+  margin-bottom: 16px;
+}
+.au-note {
+  background: var(--au-amber-dim);
+  color: var(--au-amber);
+  padding: 12px 14px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  margin-bottom: 16px;
+}
+
+/* ---- progress ------------------------------------------------------ */
+
+.au-progress {
+  padding: 30px 22px;
+}
+.au-spinner {
+  width: 34px;
+  height: 34px;
+  margin: 0 auto 18px;
+  border-radius: 50%;
+  border: 3px solid var(--au-line);
+  border-top-color: var(--au-amber);
+  animation: au-spin 0.9s linear infinite;
+}
+@keyframes au-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .au-spinner {
+    animation-duration: 3s;
+  }
+}
+.au-progress-title {
+  text-align: center;
+  font-family: var(--au-display);
+  font-weight: 600;
+  font-size: 1.05rem;
+  margin-bottom: 4px;
+}
+.au-progress-detail {
+  text-align: center;
+  font-family: var(--au-mono);
+  font-size: 0.78rem;
+  color: var(--au-muted);
+  margin-bottom: 20px;
+  overflow-wrap: anywhere;
+}
+.au-steps {
+  list-style: none;
+  margin: 0 auto;
+  padding: 0;
+  max-width: 440px;
+}
+.au-step {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 0;
+  font-size: 0.86rem;
+  color: var(--au-faint);
+}
+.au-step-mark {
+  width: 18px;
+  flex-shrink: 0;
+  font-family: var(--au-mono);
+  text-align: center;
+}
+.au-step[data-state="done"] {
+  color: var(--au-muted);
+}
+.au-step[data-state="done"] .au-step-mark {
+  color: var(--au-green);
+}
+.au-step[data-state="active"] {
+  color: var(--au-text);
+  font-weight: 500;
+}
+.au-step[data-state="active"] .au-step-mark {
+  color: var(--au-amber);
+}
+
+/* ---- results ------------------------------------------------------- */
+
+.au-score-hero {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.au-ring {
+  position: relative;
+  width: 96px;
+  height: 96px;
+  flex-shrink: 0;
+}
+.au-ring svg {
+  transform: rotate(-90deg);
+}
+.au-ring-num {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--au-mono);
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+.au-brand-name {
+  font-size: 1.3rem;
+  font-weight: 700;
+  font-family: var(--au-display);
+  margin-bottom: 2px;
+  overflow-wrap: anywhere;
+}
+.au-meta-line {
+  font-family: var(--au-mono);
+  font-size: 0.75rem;
+  color: var(--au-muted);
+  overflow-wrap: anywhere;
+}
+
+.au-exec {
+  background: var(--au-panel-2);
+  border-left: 3px solid var(--au-amber);
+  border-radius: 0 8px 8px 0;
+  padding: 16px 18px;
+  margin: 20px 0;
+  font-size: 0.92rem;
+  line-height: 1.55;
+}
+.au-kicker {
+  font-family: var(--au-mono);
+  font-size: 0.68rem;
+  color: var(--au-amber);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 8px;
+}
+
+.au-top3 h3 {
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+.au-top3-item {
+  display: flex;
+  gap: 10px;
+  background: var(--au-panel-2);
+  border: 1px solid var(--au-line);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-bottom: 8px;
+  font-size: 0.88rem;
+  align-items: flex-start;
+}
+.au-top3-num {
+  font-family: var(--au-mono);
+  color: var(--au-amber);
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.au-section-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin-bottom: 14px;
+}
+
+.au-cat {
+  border: 1px solid var(--au-line);
+  border-radius: 10px;
+  margin-bottom: 10px;
+  overflow: hidden;
+  background: var(--au-panel);
+}
+.au-cat > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px 16px;
+  cursor: pointer;
+  list-style: none;
+}
+.au-cat > summary::-webkit-details-marker {
+  display: none;
+}
+.au-cat-name {
+  font-size: 0.94rem;
+  font-weight: 600;
+}
+.au-cat-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.au-bar {
+  width: 64px;
+  height: 5px;
+  border-radius: 4px;
+  background: var(--au-line);
+  overflow: hidden;
+}
+.au-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+}
+.au-cat-score {
+  font-family: var(--au-mono);
+  font-size: 0.82rem;
+  width: 56px;
+  text-align: right;
+}
+.au-chevron {
+  color: var(--au-muted);
+  font-family: var(--au-mono);
+  transition: transform 0.2s;
+}
+.au-cat[open] .au-chevron {
+  transform: rotate(90deg);
+}
+.au-cat-body {
+  padding: 0 16px 6px;
+}
+.au-finding {
+  padding: 12px 0;
+  border-top: 1px solid var(--au-line);
+}
+.au-finding-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.au-fld-label {
+  font-family: var(--au-mono);
+  font-size: 0.65rem;
+  color: var(--au-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.au-priority {
+  font-family: var(--au-mono);
+  font-size: 0.65rem;
+  padding: 2px 8px;
+  border-radius: 20px;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+.au-priority[data-p="high"] {
+  background: var(--au-red-dim);
+  color: var(--au-red);
+}
+.au-priority[data-p="medium"] {
+  background: var(--au-amber-dim);
+  color: var(--au-amber);
+}
+.au-priority[data-p="low"] {
+  background: var(--au-green-dim);
+  color: var(--au-green);
+}
+.au-f-problem {
+  font-size: 0.9rem;
+  font-weight: 500;
+  margin-bottom: 6px;
+}
+.au-f-row {
+  font-size: 0.82rem;
+  color: var(--au-muted);
+  margin-bottom: 5px;
+}
+.au-f-row b {
+  color: var(--au-text);
+  font-weight: 500;
+}
+.au-f-evidence {
+  font-size: 0.78rem;
+  color: var(--au-muted);
+  font-family: var(--au-mono);
+  background: var(--au-panel-2);
+  border-radius: 6px;
+  padding: 7px 9px;
+  margin: 6px 0;
+  overflow-wrap: anywhere;
+}
+.au-f-impact {
+  font-size: 0.82rem;
+  color: var(--au-teal);
+}
+
+.au-final p {
+  font-size: 0.9rem;
+  color: var(--au-muted);
+  margin-bottom: 10px;
+  line-height: 1.55;
+}
+.au-final p b {
+  color: var(--au-text);
+  font-weight: 600;
+}
+.au-final h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin-bottom: 14px;
+}
+
+.au-sources summary {
+  cursor: pointer;
+  font-family: var(--au-mono);
+  font-size: 0.75rem;
+  color: var(--au-muted);
+}
+.au-sources ul {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  font-size: 0.78rem;
+  color: var(--au-muted);
+}
+.au-sources a {
+  color: var(--au-teal);
+  overflow-wrap: anywhere;
+}
+
+.au-cta {
+  margin-top: 24px;
+  background: linear-gradient(135deg, var(--au-panel-2), var(--au-panel));
+  border: 1px solid var(--au-amber);
+  border-radius: 12px;
+  padding: 22px;
+  text-align: center;
+}
+.au-cta h3 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.au-cta p {
+  color: var(--au-muted);
+  font-size: 0.88rem;
+  margin-bottom: 16px;
+}
+.au-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* ---- history list -------------------------------------------------- */
+
+.au-history {
+  margin-top: 36px;
+}
+.au-history h3 {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--au-muted);
+  font-family: var(--au-mono);
+  font-weight: 500;
+  margin-bottom: 12px;
+}
+.au-hist-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--au-panel);
+  border: 1px solid var(--au-line);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  font-size: 0.86rem;
+  color: inherit;
+  text-decoration: none;
+}
+.au-hist-item:hover {
+  border-color: var(--au-amber);
+}
+.au-hist-name {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.au-hist-date {
+  color: var(--au-muted);
+  font-family: var(--au-mono);
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+.au-hist-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.au-hist-score {
+  font-family: var(--au-mono);
+  font-weight: 600;
+  width: 2.5em;
+  text-align: right;
+}
+.au-status {
+  font-family: var(--au-mono);
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 20px;
+  background: var(--au-panel-2);
+  color: var(--au-muted);
+}
+.au-status[data-s="running"] {
+  background: var(--au-amber-dim);
+  color: var(--au-amber);
+}
+.au-status[data-s="failed"] {
+  background: var(--au-red-dim);
+  color: var(--au-red);
+}
+.au-status[data-s="complete"] {
+  background: var(--au-green-dim);
+  color: var(--au-green);
+}
+.au-empty {
+  color: var(--au-muted);
+  font-size: 0.85rem;
+  font-style: italic;
+}

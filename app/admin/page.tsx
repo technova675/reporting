@@ -52,7 +52,7 @@ export default function OverviewPage() {
 
       {!hasApiKey && (
         <div className="mb-6 rounded-lg border border-line bg-danger-soft px-4 py-3 text-[13px] text-danger">
-          <b>ANTHROPIC_API_KEY is not set.</b> Leads and audits can be imported
+          <b>LLM_API_KEY is not set.</b> Leads and audits can be imported
           and managed, but no research will run until the key is in{" "}
           <code className="mono">.env.local</code>.
         </div>
@@ -92,9 +92,13 @@ export default function OverviewPage() {
           }
         />
         <Stat
-          label="Est. API spend"
-          value={`$${usage.estimatedCostUsd.toFixed(2)}`}
-          hint="Opus 5 list rates, audits and scans"
+          label="Tokens used"
+          value={formatTokens(usage.tokensIn + usage.tokensOut)}
+          hint={
+            usage.estimatedCostUsd > 0
+              ? `≈ $${usage.estimatedCostUsd.toFixed(2)} at configured rates`
+              : "open models on a free tier — audits and scans"
+          }
         />
       </section>
 
@@ -234,4 +238,10 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
       <dd className="mono font-medium">{value}</dd>
     </div>
   );
+}
+
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1000) return `${Math.round(n / 1000)}k`;
+  return String(n);
 }

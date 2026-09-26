@@ -7,13 +7,15 @@ the code.
 ## Shape
 
 ```
-POST /api/leads ──┐
-POST /api/audits ─┴─> enqueue(job) ──> data/adbibe.json
+POST /api/leads ─────────┐
+POST /api/audits ────────┤
+POST /api/public/audits ─┴─> enqueue(job) ──> data/adbibe.json
                                              │
         POST /api/automation/tick ──> tick() ─┤
                                              │
-                     claimJobs() ──> execute() ──> Anthropic Messages API
-                                             │        (web_search + JSON schema)
+                     claimJobs() ──> execute() ──> OpenAI-compatible model API
+                                             │        (our own search/fetch tools,
+                                             │         then a JSON report pass)
                                              └──> write results back
 ```
 
@@ -26,7 +28,11 @@ request can drive it.
 1. **The open console.** `AutomationProvider` polls
    `POST /api/automation/tick` every few seconds while the queue has work, and
    every 20s when idle. This is what makes a batch visibly drain.
-2. **A scheduler.** The same endpoint, hit by Vercel Cron, `crontab`, or
+2. **Public audits.** `POST /api/public/audits` and every poll of
+   `GET /api/public/audits/[id]` call `tick()` via `after()`, so an audit from
+   the public page keeps moving with no console open. It still respects the
+   pause switch.
+3. **A scheduler.** The same endpoint, hit by Vercel Cron, `crontab`, or
    anything else. Set `ADBIBE_CRON_SECRET` and the route requires it as
    `Authorization: Bearer <secret>` or `x-cron-secret`.
 
@@ -98,17 +104,20 @@ Set `ADBIBE_DATA_DIR` to move the store somewhere other than `./data`.
 ## Cost
 
 Each job reports the token counts the API returned; audits accumulate them on
-the record. The Overview page multiplies those by Opus 5 list rates. That number
-is a sanity check against your Anthropic console, not a bill.
+the record. On a free tier there is no bill. Set `LLM_INPUT_USD_PER_MTOK` and
+`LLM_OUTPUT_USD_PER_MTOK` if you move to a paid endpoint, and Overview will
+estimate spend.
 
-Lead research runs at `medium` effort with up to 8 searches. Audits run at
-`high` with up to 12, because they cover ten surfaces including two ad
-transparency libraries.
+Audits read the site, robots.txt/sitemap and a few searches in code first,
+then give the model up to 6 more tool calls. Lead research reads the lead's
+site first and allows 6. The Meta and Google ad libraries are JavaScript apps
+this system cannot read. Audits say so, and use the tracking tags in the site
+HTML as the paid-media signal instead.
 
 ## Scaling past one operator
 
 1. Move ticking to a scheduler (above).
-2. Raise `concurrency` in Settings. The ceiling is your Anthropic rate limit,
+2. Raise `concurrency` in Settings. The ceiling is your model provider's rate limit,
    not this code — above ~4 concurrent research passes you start burning
    attempts on 429s.
 3. Replace the store with Postgres (above). At that point `claimJobs` should

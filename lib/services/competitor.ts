@@ -1,4 +1,6 @@
-import { researchJson } from "../anthropic";
+import { researchJson } from "../llm";
+import type { Evidence } from "../llm";
+import { fetchPage } from "../research/web";
 import { SIGNAL_CATEGORIES } from "../types";
 import type { Scan, Signal, Watch } from "../types";
 
@@ -145,7 +147,7 @@ ${renderBaseline(previous)}
 
 For each competitor, check what is publicly visible today:
 1. Their homepage and main product or service pages — positioning line, headline offer, pricing if published.
-2. The Meta Ad Library and Google Ads Transparency Center for that brand — are they running ads, how many creatives, what is the angle?
+2. Paid media signals — tracking tags in the homepage HTML, and anything search surfaces about their ads. The Meta Ad Library and Google Ads Transparency Center cannot be read by this system, so never report an ad count or creative you did not see.
 3. Their most recent public content or social activity, if it is visible without logging in.
 
 Then report the signals. Lead with anything that changed. If nothing changed for a competitor, do not invent something for them.`;
@@ -156,14 +158,23 @@ export async function runScan(
   previous: Scan | null,
   model: string,
 ): Promise<ScanOutput> {
+  // Every scan starts from each competitor's homepage, so fetch those in code.
+  const evidence: Evidence = { entries: [], sources: [] };
+  for (const competitor of watch.competitors) {
+    const page = await fetchPage(competitor);
+    evidence.entries.push({ label: `Homepage: ${competitor}`, text: page.text });
+    if (page.ok) evidence.sources.push(page.url);
+  }
+
   const result = await researchJson<RawScan>({
     system: SYSTEM,
     prompt: buildScanPrompt(watch, previous),
     schema: SCAN_SCHEMA,
     model,
-    // Scales with the competitor set: roughly three lookups each.
-    maxSearches: Math.min(20, Math.max(6, watch.competitors.length * 3)),
-    effort: "medium",
+    // Scales with the competitor set: roughly two lookups each beyond the
+    // homepage already fetched.
+    maxSearches: Math.min(16, Math.max(4, watch.competitors.length * 2)),
+    evidence,
   });
 
   return {
@@ -183,7 +194,7 @@ function normalizeSignals(
 ): Signal[] {
   const isBaseline = !previous || previous.signals.length === 0;
 
-  return raw.map((s) => ({
+  return (Array.isArray(raw) ? raw : []).filter((s) => s && s.headline).map((s) => ({
     competitor: s.competitor,
     category: (SIGNAL_CATEGORIES as readonly string[]).includes(s.category)
       ? (s.category as Signal["category"])

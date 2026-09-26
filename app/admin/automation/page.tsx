@@ -74,8 +74,9 @@ export default function AutomationPage() {
 
       {!hasApiKey && (
         <div className="mb-5 rounded-lg bg-danger-soft px-4 py-3 text-[13px] text-danger">
-          <b>No API key.</b> Add <code className="mono">ANTHROPIC_API_KEY</code>{" "}
-          to <code className="mono">.env.local</code> and restart the dev server.
+          <b>No API key.</b> Add <code className="mono">LLM_API_KEY</code> (a
+          free key from build.nvidia.com) to{" "}
+          <code className="mono">.env.local</code> and restart the dev server.
           The queue will hold everything until then.
         </div>
       )}

@@ -39,6 +39,8 @@ export interface Finding {
   priority: Priority;
   recommendation: string;
   expected_impact: string;
+  /** What was actually observed. Absent on audits run before it existed. */
+  evidence?: string;
 }
 
 export interface AuditCategory {
@@ -58,6 +60,23 @@ export interface AuditInputs {
 
 export type AuditStatus = "queued" | "running" | "complete" | "failed";
 
+/**
+ * The real stages of an audit run, in order. The worker writes the index of
+ * the current one onto the record, so a progress screen shows what is actually
+ * happening rather than a looping animation.
+ */
+export const AUDIT_STEPS = [
+  "Waiting in the queue",
+  "Reading the website & landing pages",
+  "Checking SEO basics — robots, sitemap, meta",
+  "Looking up search presence & social profiles",
+  "Checking competitors",
+  "Researching gaps — ads, content, funnel",
+  "Scoring all ten surfaces & writing the summary",
+] as const;
+
+export type AuditSource = "console" | "public" | "outbound";
+
 export interface Audit {
   id: string;
   createdAt: string;
@@ -73,6 +92,14 @@ export interface Audit {
   error: string | null;
   /** Lead this audit was run for, when it came out of the outbound pipeline. */
   leadId: string | null;
+  /** Where the request came from. Absent on older records (console). */
+  source?: AuditSource;
+  /** Index into AUDIT_STEPS while running. */
+  progressStep?: number;
+  /** The latest thing the worker did, e.g. "Reading acme.com/pricing". */
+  progressDetail?: string | null;
+  /** Every URL the research actually read or surfaced. */
+  sources?: string[];
   tokensIn: number;
   tokensOut: number;
   durationMs: number;

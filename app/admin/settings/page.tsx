@@ -6,8 +6,16 @@ import { PageHeader, Tag } from "@/components/ui";
 import { SERVICES } from "@/lib/types";
 import type { AutomationSettings } from "@/lib/types";
 
+const MODEL_SUGGESTIONS = [
+  { id: "nvidia/nemotron-3-super-120b-a12b", note: "Default — strong, fast MoE" },
+  { id: "nvidia/nemotron-3-ultra-550b-a55b", note: "Largest Nemotron, slower" },
+  { id: "nvidia/nemotron-nano-3-30b-a3b", note: "Small and quick" },
+  { id: "nvidia/llama-3.1-nemotron-ultra-253b-v1", note: "Previous generation" },
+];
+
 export default function SettingsPage() {
-  const { settings, hasApiKey, updateSettings, loading } = useAutomation();
+  const { settings, hasApiKey, provider, updateSettings, loading } =
+    useAutomation();
 
   if (!settings) {
     return (
@@ -23,6 +31,7 @@ export default function SettingsPage() {
       initialModel={settings.model}
       initialDelays={settings.sequenceDelaysDays}
       hasApiKey={hasApiKey}
+      provider={provider}
       updateSettings={updateSettings}
     />
   );
@@ -36,11 +45,13 @@ function SettingsForm({
   initialModel,
   initialDelays,
   hasApiKey,
+  provider,
   updateSettings,
 }: {
   initialModel: string;
   initialDelays: [number, number, number];
   hasApiKey: boolean;
+  provider: { endpoint: string; search: string } | null;
   updateSettings: (patch: Partial<AutomationSettings>) => Promise<void>;
 }) {
   const [model, setModel] = useState(initialModel);
@@ -68,21 +79,40 @@ function SettingsForm({
           </span>
           <input
             className="field mono"
+            list="model-suggestions"
             value={model}
             onChange={(e) => setModel(e.target.value)}
           />
+          <datalist id="model-suggestions">
+            {MODEL_SUGGESTIONS.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.note}
+              </option>
+            ))}
+          </datalist>
         </label>
         <p className="mt-2 text-[12px] text-muted">
-          Research runs with adaptive thinking and the web search tool. Audits
-          run at high effort, lead research at medium — audits search harder, so
-          they cost more per run.
+          Any model your endpoint serves. The default is NVIDIA&apos;s
+          Nemotron 3 Super on the free build.nvidia.com API. Research runs in
+          two passes: a tool loop where the model searches and reads pages,
+          then a separate pass that writes the JSON report. The endpoint is
+          set by <code className="mono">LLM_BASE_URL</code>, so OpenRouter,
+          Groq or a local Ollama work too.
         </p>
-        <div className="mt-3 flex items-center gap-2">
+        <div className="mt-3 flex flex-wrap items-center gap-2">
           <span className="text-[12px] text-muted">API key:</span>
           {hasApiKey ? (
             <Tag tone="ok">detected</Tag>
           ) : (
             <Tag tone="danger">not set</Tag>
+          )}
+          {provider && (
+            <>
+              <span className="ml-2 text-[12px] text-muted">Endpoint:</span>
+              <Tag>{provider.endpoint}</Tag>
+              <span className="ml-2 text-[12px] text-muted">Web search:</span>
+              <Tag>{provider.search}</Tag>
+            </>
           )}
         </div>
       </section>
