@@ -1,5 +1,6 @@
+import { after } from "next/server";
 import { now, read, write } from "@/lib/db";
-import { enqueue } from "@/lib/automation/engine";
+import { enqueue, runJobNow } from "@/lib/automation/engine";
 
 export async function GET(
   _request: Request,
@@ -21,7 +22,7 @@ export async function POST(
 ) {
   const { id } = await ctx.params;
 
-  const audit = await write((db) => {
+  const result = await write((db) => {
     const found = db.audits.find((a) => a.id === id);
     if (!found) return null;
     found.status = "queued";
@@ -29,14 +30,22 @@ export async function POST(
     found.progressStep = 0;
     found.progressDetail = null;
     found.updatedAt = now();
-    enqueue(db, "run_audit", found.id, found.inputs.brand || found.inputs.website);
-    return found;
+    // Drop any job still waiting for this audit, or it runs a second time later.
+    for (const stale of db.jobs) {
+      if (stale.subjectId === found.id && stale.status === "queued") {
+        stale.status = "cancelled";
+        stale.finishedAt = now();
+      }
+    }
+    const job = enqueue(db, "run_audit", found.id, found.inputs.brand || found.inputs.website);
+    return { audit: found, jobId: job.id };
   });
 
-  if (!audit) {
+  if (!result) {
     return Response.json({ error: "Audit not found." }, { status: 404 });
   }
-  return Response.json({ audit });
+  after(() => runJobNow(result.jobId).catch(() => undefined));
+  return Response.json({ audit: result.audit });
 }
 
 export async function DELETE(

@@ -123,6 +123,33 @@ export async function tick(): Promise<TickResult> {
 }
 
 /**
+ * Runs one specific queued job immediately, whether or not the worker is
+ * paused. For work an operator explicitly asked for (a console audit), where
+ * waiting on the global switch — which exists for bulk lead research and
+ * scheduled scans — would just look broken.
+ */
+export async function runJobNow(jobId: string): Promise<Outcome | null> {
+  if (!isLlmConfigured()) return null;
+
+  // Claimed inside the write lock, so a tick running at the same moment
+  // cannot pick up the same job.
+  const job = await write((db) => {
+    const found = db.jobs.find((j) => j.id === jobId);
+    if (!found || found.status !== "queued") return null;
+    found.status = "running";
+    found.startedAt = now();
+    found.attempts += 1;
+    found.log.push(
+      logLine("info", `Attempt ${found.attempts} of ${found.maxAttempts} started.`),
+    );
+    return JSON.parse(JSON.stringify(found)) as Job;
+  });
+  if (!job) return null;
+
+  return execute(job);
+}
+
+/**
  * Atomically moves up to `limit` due jobs into `running` and returns them.
  *
  * Also sweeps jobs left `running` by a process that died mid-flight — without

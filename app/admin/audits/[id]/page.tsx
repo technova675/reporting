@@ -71,7 +71,8 @@ export default async function AuditDetailPage({
             step={view.progressStep}
             detail={view.progressDetail}
             queuePosition={view.queuePosition}
-            paused={!db.settings.enabled}
+            // Console audits start on their own; only public ones wait on the worker.
+            paused={audit.source === "public" && !db.settings.enabled}
           />
         </>
       )}

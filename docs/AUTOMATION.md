@@ -9,7 +9,7 @@ the code.
 ```
 POST /api/leads ─────────┐
 POST /api/audits ────────┤
-POST /api/public/audits ─┴─> enqueue(job) ──> data/adbibe.json
+POST /api/public/audits ─┴─> enqueue(job) ──> store (Supabase or data/adbibe.json)
                                              │
         POST /api/automation/tick ──> tick() ─┤
                                              │
@@ -92,14 +92,20 @@ reviewed, not a toggle someone flips at 11pm.
 
 ## Storage
 
-`lib/db.ts` is the whole persistence layer: a JSON file, one writer at a time
-via a promise chain, written to a temp file and renamed so a crash cannot leave
-a truncated store behind.
+`lib/db.ts` is the whole persistence layer. Every route and the engine go
+through its `read()` and `write()`; nothing else touches storage.
 
-Swapping to Postgres means replacing `read()` and `write()` in that one file.
-Every route and the engine go through them; nothing else touches the disk.
+**Supabase** (used when `NEXT_PUBLIC_SUPABASE_URL` and
+`SUPABASE_SERVICE_ROLE_KEY` are set): the store is one JSON row in
+`adbibe_store`. Run `supabase/migrations/0001_adbibe_store.sql` in the SQL
+editor once. The first read imports `data/adbibe.json` if it exists. Writes
+compare-and-swap on a `version` column and re-run on conflict, so several
+server instances are safe — this is the backend to use on a hosted deploy.
 
-Set `ADBIBE_DATA_DIR` to move the store somewhere other than `./data`.
+**Local file** (the fallback): `data/adbibe.json`, one writer at a time via a
+promise chain, written to a temp file and renamed so a crash cannot leave a
+truncated store behind. Set `ADBIBE_DATA_DIR` to move it somewhere other than
+`./data`.
 
 ## Cost
 

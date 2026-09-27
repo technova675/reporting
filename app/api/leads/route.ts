@@ -1,6 +1,7 @@
 import { newId, now, read, write } from "@/lib/db";
 import { enqueue } from "@/lib/automation/engine";
-import { parseLeadList } from "@/lib/services/prospect";
+import { parseLeadList, validateLeadRows } from "@/lib/services/prospect";
+import type { LeadInput } from "@/lib/services/prospect";
 import type { Lead } from "@/lib/types";
 
 export async function GET() {
@@ -9,7 +10,10 @@ export async function GET() {
 }
 
 interface CreateBody {
+  /** Pasted text, one lead per line. */
   raw?: string;
+  /** Already-split rows, from an uploaded file. Takes precedence over `raw`. */
+  rows?: Partial<Record<keyof LeadInput, unknown>>[];
   owner?: string;
   tags?: string[];
   /** Queue research immediately. Defaults to true. */
@@ -25,14 +29,17 @@ export async function POST(request: Request) {
   }
 
   const raw = (body.raw ?? "").trim();
-  if (!raw) {
+  const uploaded = Array.isArray(body.rows) ? body.rows : null;
+  if (!raw && !uploaded?.length) {
     return Response.json(
-      { error: "Paste at least one lead before importing." },
+      { error: "Paste or upload at least one lead before importing." },
       { status: 400 },
     );
   }
 
-  const { rows, errors } = parseLeadList(raw);
+  const { rows, errors } = uploaded
+    ? validateLeadRows(uploaded)
+    : parseLeadList(raw);
   if (rows.length === 0) {
     return Response.json(
       { error: "No usable leads in that list.", warnings: errors },

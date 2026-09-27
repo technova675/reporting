@@ -26,7 +26,7 @@ const SOURCE_LABEL: Record<AuditSource, string> = {
 };
 
 export default function AuditsPage() {
-  const { revision, notifyMutation, settings } = useAutomation();
+  const { revision, notifyMutation, hasApiKey } = useAutomation();
   const [formOpen, setFormOpen] = useState(false);
 
   const { data, loading, reload } = useResource(
@@ -83,13 +83,13 @@ export default function AuditsPage() {
       {formOpen && (
         <AuditForm
           onSubmit={queue}
-          submitLabel="Queue audit →"
-          busyLabel="Queueing…"
+          submitLabel="Run audit →"
+          busyLabel="Starting…"
           notice={
-            !settings?.enabled && (
+            !hasApiKey && (
               <p className="au-note">
-                Automation is paused — this audit will queue but not run until
-                you start the worker.
+                No LLM_API_KEY is set — this audit will queue but not run until
+                the key is in .env.local.
               </p>
             )
           }

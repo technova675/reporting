@@ -150,42 +150,61 @@ export async function researchLead(
   };
 }
 
-/** Parses the pasted CSV-ish lead list into partial leads. */
-export function parseLeadList(raw: string): {
-  rows: Omit<Lead, "id" | "createdAt" | "updatedAt" | "stage" | "sequenceStep" | "nextTouchAt" | "research" | "drafts" | "auditId" | "error" | "owner" | "tags" | "events">[];
-  errors: string[];
-} {
-  const rows: ReturnType<typeof parseLeadList>["rows"] = [];
-  const errors: string[] = [];
+export type LeadInput = Pick<Lead, "name" | "company" | "website" | "email" | "linkedin">;
 
-  raw
+/** Parses the pasted CSV-ish lead list into partial leads. */
+export function parseLeadList(raw: string): { rows: LeadInput[]; errors: string[] } {
+  const lines = raw
     .split("\n")
     .map((l) => l.trim())
-    .filter(Boolean)
-    .forEach((line, i) => {
-      // Skip a header row if someone pasted one straight out of a sheet.
-      if (i === 0 && /^name\s*,/i.test(line)) return;
+    .filter(Boolean);
+  // Skip a header row if someone pasted one straight out of a sheet.
+  if (lines.length && /^name\s*,/i.test(lines[0])) lines.shift();
 
-      const parts = line.split(",").map((p) => p.trim());
-      const [name, company, website, email, linkedin] = parts;
-      if (!name) {
-        errors.push(`Line ${i + 1}: no name — skipped.`);
-        return;
-      }
-      if (!website && !linkedin) {
-        errors.push(
-          `Line ${i + 1} (${name}): no website or LinkedIn, nothing to research — skipped.`,
-        );
-        return;
-      }
-      rows.push({
-        name,
-        company: company ?? "",
-        website: normalizeUrl(website ?? ""),
-        email: email ?? "",
-        linkedin: linkedin ?? "",
-      });
+  return validateLeadRows(
+    lines.map((line) => {
+      const [name, company, website, email, linkedin] = line
+        .split(",")
+        .map((p) => p.trim());
+      return { name, company, website, email, linkedin };
+    }),
+  );
+}
+
+/**
+ * The checks every import goes through, pasted or uploaded: a lead needs a
+ * name and something to research.
+ */
+export function validateLeadRows(input: Partial<Record<keyof LeadInput, unknown>>[]): {
+  rows: LeadInput[];
+  errors: string[];
+} {
+  const rows: LeadInput[] = [];
+  const errors: string[] = [];
+  const text = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+
+  input.forEach((row, i) => {
+    const name = text(row.name);
+    const website = text(row.website);
+    const linkedin = text(row.linkedin);
+    if (!name) {
+      errors.push(`Line ${i + 1}: no name — skipped.`);
+      return;
+    }
+    if (!website && !linkedin) {
+      errors.push(
+        `Line ${i + 1} (${name}): no website or LinkedIn, nothing to research — skipped.`,
+      );
+      return;
+    }
+    rows.push({
+      name,
+      company: text(row.company),
+      website: normalizeUrl(website),
+      email: text(row.email),
+      linkedin,
     });
+  });
 
   return { rows, errors };
 }

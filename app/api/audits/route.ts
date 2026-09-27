@@ -1,4 +1,6 @@
+import { after } from "next/server";
 import { now, read, write } from "@/lib/db";
+import { runJobNow } from "@/lib/automation/engine";
 import { createAudit, parseAuditInputs } from "@/lib/auditRequests";
 
 export async function GET() {
@@ -27,8 +29,9 @@ export async function POST(request: Request) {
   const { inputs } = parsed;
   const leadId = typeof body.leadId === "string" ? body.leadId : null;
 
-  const audit = await write((db) => {
+  const { audit, jobId } = await write((db) => {
     const record = createAudit(db, inputs, leadId ? "outbound" : "console", leadId);
+    const job = db.jobs.find((j) => j.subjectId === record.id && j.status === "queued");
 
     if (leadId) {
       const lead = db.leads.find((l) => l.id === leadId);
@@ -42,8 +45,12 @@ export async function POST(request: Request) {
         });
       }
     }
-    return record;
+    return { audit: record, jobId: job?.id ?? null };
   });
+
+  // An operator asked for this audit, so start it now instead of leaving it
+  // queued behind the worker's pause switch.
+  if (jobId) after(() => runJobNow(jobId).catch(() => undefined));
 
   return Response.json({ audit }, { status: 201 });
 }
