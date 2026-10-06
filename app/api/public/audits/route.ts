@@ -10,9 +10,9 @@ import {
   takeRateLimit,
 } from "@/lib/publicAccess";
 
-// Audits run inside after(), which shares this route's time limit. Keep it
-// above the audit's own budget (AUDIT_TIME_BUDGET_MS in lib/services/audit.ts).
-export const maxDuration = 800;
+// Audit phases run inside after(), which shares this route's time limit: 300s,
+// the Vercel Hobby maximum. Each phase's budget in lib/services/audit.ts sits under it.
+export const maxDuration = 300;
 
 /**
  * The public intake for the free audit — what /audit and the standalone

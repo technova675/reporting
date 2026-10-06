@@ -5,6 +5,8 @@
  * routes and the client components all agree on one shape.
  */
 
+import type { ResearchNotes } from "./llm";
+
 export const SERVICES = [
   "Performance Marketing",
   "Programmatic Marketing",
@@ -226,6 +228,12 @@ export interface Job {
   error: string | null;
   log: JobLogLine[];
   batchId: string | null;
+  /**
+   * A run_audit job's finished research, kept so the report runs in its own
+   * function invocation and a retry of the report does not redo the research.
+   * Cleared once the audit completes.
+   */
+  checkpoint?: ResearchNotes | null;
 }
 
 export interface Batch {

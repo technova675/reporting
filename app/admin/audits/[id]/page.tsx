@@ -14,9 +14,9 @@ import { AuditStatusTag, Tag, relativeTime } from "@/components/ui";
 import { RequeueButton } from "@/components/RequeueButton";
 import { AutoRefresh } from "@/components/AutoRefresh";
 
-// Audits run inside after(), which shares this route's time limit. Keep it
-// above the audit's own budget (AUDIT_TIME_BUDGET_MS in lib/services/audit.ts).
-export const maxDuration = 800;
+// Audit phases run inside after(), which shares this route's time limit: 300s,
+// the Vercel Hobby maximum. Each phase's budget in lib/services/audit.ts sits under it.
+export const maxDuration = 300;
 
 export default async function AuditDetailPage({
   params,

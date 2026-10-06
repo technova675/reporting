@@ -1,5 +1,5 @@
-import { researchJson } from "../llm";
-import type { Evidence } from "../llm";
+import { research, writeReport } from "../llm";
+import type { Evidence, ResearchNotes } from "../llm";
 import { crawlBasics, fetchPage, normalizeUrl, webSearch } from "../research/web";
 import { AUDIT_CATEGORIES } from "../types";
 import type { AuditCategory, AuditInputs, Finding, Priority } from "../types";
@@ -17,12 +17,16 @@ import type { AuditCategory, AuditInputs, Finding, Priority } from "../types";
 const CATEGORY_KEYS = AUDIT_CATEGORIES.map((c) => c.key);
 
 /**
- * Wall-clock budget for one audit attempt. It must sit under `maxDuration` on
- * the routes that start audits (800s), or the platform kills the function
- * mid-run with no error recorded; this way a slow model fails the attempt
- * cleanly and the job retries.
+ * An audit runs as two function invocations — research, then the report — so
+ * each fits Vercel Hobby's 300s limit (`maxDuration` on the routes that run
+ * audits). Past its budget a phase stops cleanly rather than being killed
+ * mid-run with no error recorded.
+ *
+ * Research stops calling the model at its budget, but a tool already started
+ * can run up to a minute past it, so it gets the smaller share.
  */
-const AUDIT_TIME_BUDGET_MS = 11 * 60_000;
+const RESEARCH_BUDGET_MS = 190_000;
+const REPORT_BUDGET_MS = 240_000;
 
 const FINDING_SCHEMA = {
   type: "object",
@@ -153,42 +157,73 @@ async function gatherEvidence(
   inputs: AuditInputs,
   progress: AuditProgress,
 ): Promise<Evidence> {
+  const home = normalizeUrl(inputs.website);
+  const host = home ? new URL(home).hostname.replace(/^www\./, "") : inputs.website;
+  const brand = inputs.brand || host.split(".")[0];
+  const competitors = (inputs.competitors ?? "")
+    .split(/[,\n]/)
+    .map((c) => c.trim())
+    .filter(Boolean)
+    .slice(0, 2);
+
+  // The checks run side by side, so the steps start together; only move the
+  // progress bar forward.
+  let reached = 0;
+  const step = async (n: number, detail: string) => {
+    if (n <= reached) return;
+    reached = n;
+    await progress(n, detail);
+  };
+
+  const [site, crawl, brandSearch, indexed, category, rivals] = await Promise.all([
+    (async () => {
+      await step(1, `Reading ${host}`);
+      const homepage = await fetchPage(inputs.website);
+      // One or two inner pages where the buying decision actually happens.
+      const inner = await Promise.all(
+        pickInnerPages(homepage.internalLinks, 2).map(async (url) => ({
+          url,
+          page: await fetchPage(url),
+        })),
+      );
+      return { homepage, inner };
+    })(),
+    (async () => {
+      await step(2, "Checking robots.txt and sitemap");
+      return crawlBasics(inputs.website);
+    })(),
+    (async () => {
+      await step(3, `Searching for ${brand}`);
+      return webSearch(`${brand}${inputs.industry ? ` ${inputs.industry}` : ""}`);
+    })(),
+    webSearch(`site:${host}`),
+    inputs.industry ? webSearch(`best ${inputs.industry} brands`) : Promise.resolve(null),
+    (async () => {
+      if (competitors.length) await step(4, `Reading competitor ${competitors.join(", ")}`);
+      return Promise.all(
+        competitors.map(async (name) => ({ name, page: await fetchPage(name) })),
+      );
+    })(),
+  ]);
+
   const evidence: Evidence = { entries: [], sources: [] };
   const add = (label: string, text: string, url?: string) => {
     evidence.entries.push({ label, text });
     if (url) evidence.sources.push(url);
   };
 
-  const home = normalizeUrl(inputs.website);
-  const host = home ? new URL(home).hostname.replace(/^www\./, "") : inputs.website;
-  const brand = inputs.brand || host.split(".")[0];
-
-  await progress(1, `Reading ${host}`);
-  const homepage = await fetchPage(inputs.website);
+  const { homepage } = site;
   add("Homepage", homepage.text, homepage.ok ? homepage.url : undefined);
-
-  // One or two inner pages where the buying decision actually happens.
-  const inner = pickInnerPages(homepage.internalLinks, 2);
-  for (const url of inner) {
-    await progress(1, `Reading ${url.replace(/^https?:\/\//, "")}`);
-    const page = await fetchPage(url);
+  for (const { url, page } of site.inner) {
     add(`Inner page: ${url}`, page.text, page.ok ? page.url : undefined);
   }
 
-  await progress(2, "Checking robots.txt and sitemap");
-  add("Crawlability", await crawlBasics(inputs.website));
+  add("Crawlability", crawl);
 
-  await progress(3, `Searching for ${brand}`);
-  const brandSearch = await webSearch(`${brand}${inputs.industry ? ` ${inputs.industry}` : ""}`);
   add(`Search: ${brand}`, brandSearch.text);
   evidence.sources.push(...brandSearch.urls);
-
-  const indexed = await webSearch(`site:${host}`);
   add(`Search: site:${host}`, indexed.text);
-
-  if (inputs.industry) {
-    await progress(3, `Checking who ranks for "${inputs.industry}"`);
-    const category = await webSearch(`best ${inputs.industry} brands`);
+  if (category) {
     add(`Search: best ${inputs.industry} brands`, category.text);
     evidence.sources.push(...category.urls);
   }
@@ -209,15 +244,8 @@ async function gatherEvidence(
     `Meta Ad Library (https://www.facebook.com/ads/library/?q=${encodeURIComponent(brand)}) and Google Ads Transparency Center (https://adstransparency.google.com/?domain=${host}) are JavaScript applications this system cannot read. Live campaigns were NOT verified. Use the tracking tags found in the site HTML as the only paid-media signal, and recommend checking the libraries manually.`,
   );
 
-  const competitors = (inputs.competitors ?? "")
-    .split(/[,\n]/)
-    .map((c) => c.trim())
-    .filter(Boolean)
-    .slice(0, 2);
-  for (const competitor of competitors) {
-    await progress(4, `Reading competitor ${competitor}`);
-    const page = await fetchPage(competitor);
-    add(`Competitor homepage: ${competitor}`, page.text, page.ok ? page.url : undefined);
+  for (const { name, page } of rivals) {
+    add(`Competitor homepage: ${name}`, page.text, page.ok ? page.url : undefined);
   }
 
   return evidence;
@@ -236,29 +264,43 @@ function pickInnerPages(links: string[], limit: number): string[] {
   return [...new Set(scored.map((s) => s.url))].slice(0, limit);
 }
 
-export async function runAudit(
+/** Phase one: the site checks plus the model's own research, as notes. */
+export async function researchAudit(
   inputs: AuditInputs,
   model: string,
   progress: AuditProgress = () => undefined,
-): Promise<AuditOutput> {
+): Promise<ResearchNotes> {
   const started = Date.now();
   const evidence = await gatherEvidence(inputs, progress);
 
   await progress(5, "Researching what the checks did not cover");
-  let reportStarted = false;
-  const result = await researchJson<RawAudit>({
+  const notes = await research({
     system: SYSTEM,
     prompt: buildAuditPrompt(inputs),
-    schema: AUDIT_SCHEMA,
     model,
     // On top of the pre-gathered evidence: competitors, social, category terms.
     maxSearches: 6,
     evidence,
-    deadline: started + AUDIT_TIME_BUDGET_MS,
-    onProgress: (detail) => {
-      if (detail === "Writing the report") reportStarted = true;
-      void progress(reportStarted ? 6 : 5, detail);
-    },
+    onProgress: (detail) => void progress(5, detail),
+    deadline: started + RESEARCH_BUDGET_MS,
+  });
+  // Count the site checks too, not only the model's share.
+  return { ...notes, durationMs: Date.now() - started };
+}
+
+/** Phase two: scores and findings, written from phase one's notes. */
+export async function writeAuditReport(
+  inputs: AuditInputs,
+  model: string,
+  notes: ResearchNotes,
+): Promise<AuditOutput> {
+  const result = await writeReport<RawAudit>({
+    system: SYSTEM,
+    prompt: buildAuditPrompt(inputs),
+    schema: AUDIT_SCHEMA,
+    model,
+    research: notes,
+    deadline: Date.now() + REPORT_BUDGET_MS,
   });
 
   return {
@@ -272,7 +314,7 @@ export async function runAudit(
     sources: result.sources.slice(0, 40),
     tokensIn: result.tokensIn,
     tokensOut: result.tokensOut,
-    durationMs: Date.now() - started,
+    durationMs: result.durationMs,
   };
 }
 

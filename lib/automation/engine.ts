@@ -1,8 +1,9 @@
 import { newId, now, read, write } from "../db";
 import { isLlmConfigured } from "../llm";
-import { runAudit } from "../services/audit";
+import { researchAudit, writeAuditReport } from "../services/audit";
 import { researchLead } from "../services/prospect";
 import { runScan } from "../services/competitor";
+import { callerAuthHeaders } from "./secret";
 import { CADENCE_DAYS } from "../types";
 import type { Db, Job, JobKind, JobLogLine, Lead, Scan, Watch } from "../types";
 
@@ -18,8 +19,11 @@ import type { Db, Job, JobKind, JobLogLine, Lead, Scan, Watch } from "../types";
 
 const BASE_BACKOFF_MS = 15_000;
 const MAX_BACKOFF_MS = 10 * 60_000;
-/** A research pass that has not reported back in this long is assumed dead. */
-const STALE_AFTER_MS = 15 * 60_000;
+/**
+ * A job silent for this long is assumed dead. Nothing runs past the 300s
+ * function limit, so this only has to clear that with some room.
+ */
+const STALE_AFTER_MS = 6 * 60_000;
 
 /** Guards against a second tick starting while one is still working. */
 let inFlight = false;
@@ -91,14 +95,16 @@ export async function tick(): Promise<TickResult> {
 
   if (inFlight) return { ...empty, skipped: "A tick is already running." };
 
-  // Before the pause check: a job orphaned mid-run must be cleaned up even
-  // while the worker is paused, or it reads as "running" forever.
-  await recoverStaleJobs();
-
   const db = await read();
   if (!db.settings.enabled) {
+    // A job orphaned mid-run must be cleaned up even while the worker is
+    // paused, or it reads as "running" forever.
+    await recoverStaleJobs();
     return { ...empty, skipped: "Automation is paused." };
   }
+  // Running, the claim below picks the re-queued jobs up; starting them from
+  // the sweep as well would run two phases in one 300s request.
+  if (findStaleJobs(db).length > 0) await requeueStaleJobs();
   if (!isLlmConfigured()) {
     return { ...empty, skipped: "LLM_API_KEY is not set." };
   }
@@ -265,7 +271,7 @@ function claimJobs(limit: number): Promise<Job[]> {
   });
 }
 
-type Outcome = "succeeded" | "failed" | "retry";
+type Outcome = "succeeded" | "failed" | "retry" | "continued";
 
 async function execute(job: Job): Promise<Outcome> {
   try {
@@ -274,7 +280,10 @@ async function execute(job: Job): Promise<Outcome> {
         await handleResearchLead(job);
         break;
       case "run_audit":
-        await handleRunAudit(job);
+        if ((await handleRunAudit(job)) === "continue") {
+          await continueJob(job.id);
+          return "continued";
+        }
         break;
       case "advance_sequence":
         await handleAdvanceSequence(job);
@@ -432,33 +441,72 @@ async function handleResearchLead(job: Job): Promise<void> {
   });
 }
 
-async function handleRunAudit(job: Job): Promise<void> {
+/**
+ * Audits run as two invocations (see lib/services/audit.ts). The first saves
+ * its research on the job and hands the job back to the queue; the run that
+ * picks it up again finds that checkpoint and writes the report.
+ */
+async function handleRunAudit(job: Job): Promise<"done" | "continue"> {
+  const notes = job.checkpoint ?? null;
+
   const { inputs, model } = await write((db) => {
     const audit = db.audits.find((a) => a.id === job.subjectId);
     if (!audit) throw new Error(`Audit ${job.subjectId} no longer exists.`);
     audit.status = "running";
     audit.error = null;
-    audit.progressStep = 1;
-    audit.progressDetail = null;
+    audit.progressStep = notes ? 6 : 1;
+    audit.progressDetail = notes ? "Writing the report" : null;
     audit.updatedAt = now();
-    appendLog(db, job.id, "info", `Auditing ${audit.inputs.website}.`);
+    appendLog(
+      db,
+      job.id,
+      "info",
+      notes
+        ? `Writing the report for ${audit.inputs.website}.`
+        : `Auditing ${audit.inputs.website}.`,
+    );
     return {
       inputs: { ...audit.inputs },
       model: db.settings.model,
     };
   });
 
-  const output = await runAudit(inputs, model, (step, detail) =>
-    write((db) => {
+  if (!notes) {
+    const research = await researchAudit(inputs, model, (step, detail) =>
+      write((db) => {
+        const audit = db.audits.find((a) => a.id === job.subjectId);
+        if (!audit || audit.status !== "running") return;
+        audit.progressStep = step;
+        audit.progressDetail = detail;
+        audit.updatedAt = now();
+      }).catch(() => undefined),
+    );
+
+    await write((db) => {
+      const j = db.jobs.find((x) => x.id === job.id);
+      // Re-run or deleted meanwhile: leave the cancelled job alone.
+      if (!j || j.status !== "running") return;
+      j.checkpoint = research;
+      j.status = "queued";
+      j.runAfter = now();
+      // The report is its own step, with its own attempts.
+      j.attempts = 0;
+      appendLog(db, job.id, "info", "Research done — the report runs next.");
       const audit = db.audits.find((a) => a.id === job.subjectId);
-      if (!audit || audit.status !== "running") return;
-      audit.progressStep = step;
-      audit.progressDetail = detail;
-      audit.updatedAt = now();
-    }).catch(() => undefined),
-  );
+      if (audit?.status === "running") {
+        audit.progressStep = 6;
+        audit.progressDetail = "Waiting to write the report";
+        audit.updatedAt = now();
+      }
+    });
+    return "continue";
+  }
+
+  const output = await writeAuditReport(inputs, model, notes);
 
   await write((db) => {
+    const j = db.jobs.find((x) => x.id === job.id);
+    if (j) j.checkpoint = null;
     const audit = db.audits.find((a) => a.id === job.subjectId);
     if (!audit) return;
     audit.status = "complete";
@@ -476,6 +524,45 @@ async function handleRunAudit(job: Job): Promise<void> {
     audit.updatedAt = now();
     appendLog(db, job.id, "info", `Scored ${output.overallScore}/100.`);
   });
+  return "done";
+}
+
+/**
+ * Starts the next phase of a split job. On Vercel that has to be a fresh
+ * request, so the phase gets its own time limit; anywhere else there is no
+ * limit, so it carries on in this process. If the request cannot be made, the
+ * next console poll or worker tick starts the job instead.
+ */
+async function continueJob(jobId: string): Promise<void> {
+  if (!process.env.VERCEL) {
+    await runJobNow(jobId);
+    return;
+  }
+  const base = selfUrl();
+  if (!base) return;
+  try {
+    await fetch(`${base}/api/automation/continue`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...callerAuthHeaders() },
+      body: JSON.stringify({ jobId }),
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch {
+    /* Left queued for the next poll or tick. */
+  }
+}
+
+/** This deployment's own URL, for requests it makes to itself. */
+function selfUrl(): string | null {
+  const explicit = process.env.ADBIBE_BASE_URL?.trim();
+  if (explicit) return explicit.replace(/\/$/, "");
+  // The production domain, not the deployment URL: Vercel's default
+  // protection guards deployment URLs, and this request carries no login.
+  const host =
+    process.env.VERCEL_ENV === "production"
+      ? process.env.VERCEL_PROJECT_PRODUCTION_URL
+      : process.env.VERCEL_URL;
+  return host ? `https://${host}` : null;
 }
 
 /**

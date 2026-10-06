@@ -104,8 +104,8 @@ interface Usage {
 }
 
 const REQUEST_TIMEOUT_MS = 180_000;
-/** Time held back from research so the report call still gets to run. */
-const REPORT_RESERVE_MS = 4 * 60_000;
+/** Time a single-pass researchJson holds back so the report still gets to run. */
+const REPORT_RESERVE_MS = 120_000;
 
 /**
  * One chat call, retried on transient failures. Never runs past `deadline`
@@ -322,6 +322,9 @@ You are in the RESEARCH phase. Use the web_search and fetch_page tools to check 
       let output: string;
       if (used >= maxToolCalls) {
         output = "Tool budget exhausted. Write your research notes now.";
+      } else if (Date.now() >= deadline) {
+        // Each tool can take up to a minute; none may start once time is up.
+        output = "Out of research time. Write your research notes now.";
       } else {
         used += 1;
         output = await executeTool(call, gathered, onProgress);
@@ -599,10 +602,23 @@ export interface ResearchResult<T> {
   sources: string[];
 }
 
+/**
+ * What the research phase hands the report phase. Plain JSON, so a job can
+ * carry it from one function invocation to the next.
+ */
+export interface ResearchNotes {
+  /** The evidence, already rendered and trimmed to fit the report prompt. */
+  evidenceText: string;
+  notes: string;
+  sources: string[];
+  tokensIn: number;
+  tokensOut: number;
+  durationMs: number;
+}
+
 interface ResearchOptions {
   system: string;
   prompt: string;
-  schema: Record<string, unknown>;
   model: string;
   /** Tool calls the model may make on top of the pre-gathered evidence. */
   maxSearches?: number;
@@ -610,23 +626,22 @@ interface ResearchOptions {
   evidence?: Evidence;
   onProgress?: (message: string) => void;
   /**
-   * Epoch ms the whole pass must finish by. Research stops early enough to
-   * leave the report call time to run; past it, the pass throws
-   * LlmDeadlineError instead of hanging.
+   * Epoch ms the phase must finish by. Research stops calling the model and
+   * starting tools there, and keeps what it gathered.
    */
   deadline?: number;
 }
 
-export async function researchJson<T>({
+/** Phase one: the tool loop, ending in notes plus everything it observed. */
+export async function research({
   system,
   prompt,
-  schema,
   model,
   maxSearches = 6,
   evidence = { entries: [], sources: [] },
   onProgress,
   deadline = Infinity,
-}: ResearchOptions): Promise<ResearchResult<T>> {
+}: ResearchOptions): Promise<ResearchNotes> {
   const started = Date.now();
   const usage: Usage = { tokensIn: 0, tokensOut: 0 };
 
@@ -637,7 +652,7 @@ export async function researchJson<T>({
     evidence,
     maxSearches,
     usage,
-    deadline - REPORT_RESERVE_MS,
+    deadline,
     onProgress,
   );
 
@@ -645,16 +660,46 @@ export async function researchJson<T>({
     entries: [...evidence.entries, ...gathered.entries],
     sources: [...evidence.sources, ...gathered.sources],
   };
+  return {
+    evidenceText: renderEvidence(all, 45_000),
+    notes: truncate(notes, 12_000),
+    sources: [...new Set(all.sources)],
+    tokensIn: usage.tokensIn,
+    tokensOut: usage.tokensOut,
+    durationMs: Date.now() - started,
+  };
+}
 
-  onProgress?.("Writing the report");
+interface ReportOptions {
+  system: string;
+  prompt: string;
+  schema: Record<string, unknown>;
+  model: string;
+  research: ResearchNotes;
+  /** Epoch ms the report must be written by, or LlmDeadlineError is thrown. */
+  deadline?: number;
+}
+
+/** Phase two: turns research notes into schema-valid JSON. */
+export async function writeReport<T>({
+  system,
+  prompt,
+  schema,
+  model,
+  research: done,
+  deadline = Infinity,
+}: ReportOptions): Promise<ResearchResult<T>> {
+  const started = Date.now();
+  const usage: Usage = { tokensIn: done.tokensIn, tokensOut: done.tokensOut };
+
   const data = await formatJson<T>(
     model,
     system,
     `${prompt}
 
-${renderEvidence(all, 45_000)}
+${done.evidenceText}
 
-${notes ? `RESEARCH NOTES:\n${truncate(notes, 12_000)}` : "RESEARCH NOTES: none beyond the evidence above."}
+${done.notes ? `RESEARCH NOTES:\n${done.notes}` : "RESEARCH NOTES: none beyond the evidence above."}
 
 Base every claim on the evidence and notes above. Where they do not cover something, say it could not be verified — do not fill the gap from memory.`,
     schema,
@@ -666,7 +711,24 @@ Base every claim on the evidence and notes above. Where they do not cover someth
     data,
     tokensIn: usage.tokensIn,
     tokensOut: usage.tokensOut,
-    durationMs: Date.now() - started,
-    sources: [...new Set(all.sources)],
+    durationMs: done.durationMs + (Date.now() - started),
+    sources: done.sources,
   };
+}
+
+/**
+ * What a single-invocation pass may spend: under Vercel Hobby's 300s function
+ * limit, with room left for the store writes around it.
+ */
+const SINGLE_PASS_BUDGET_MS = 250_000;
+
+/** Both phases in one go, for jobs small enough to fit one invocation. */
+export async function researchJson<T>({
+  schema,
+  deadline = Date.now() + SINGLE_PASS_BUDGET_MS,
+  ...options
+}: ResearchOptions & { schema: Record<string, unknown> }): Promise<ResearchResult<T>> {
+  const done = await research({ ...options, deadline: deadline - REPORT_RESERVE_MS });
+  options.onProgress?.("Writing the report");
+  return writeReport<T>({ ...options, schema, research: done, deadline });
 }

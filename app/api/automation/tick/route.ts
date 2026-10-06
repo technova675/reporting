@@ -1,9 +1,11 @@
 import { read } from "@/lib/db";
 import { hasPendingWork, tick } from "@/lib/automation/engine";
+import { isAuthorizedCaller } from "@/lib/automation/secret";
 import { computeStats } from "@/lib/stats";
 
-// A tick can run a whole audit inside this request. Keep the limit above the audit's own budget (AUDIT_TIME_BUDGET_MS in lib/services/audit.ts).
-export const maxDuration = 800;
+// A tick can run an audit phase inside this request: 300s is the Vercel Hobby
+// maximum, and each phase's budget in lib/services/audit.ts sits under it.
+export const maxDuration = 300;
 
 /**
  * Drives the queue forward by one pass.
@@ -13,14 +15,8 @@ export const maxDuration = 800;
  * the unattended run — which is why it accepts an optional shared secret.
  */
 export async function POST(request: Request) {
-  const secret = process.env.ADBIBE_CRON_SECRET;
-  if (secret) {
-    const provided =
-      request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ??
-      request.headers.get("x-cron-secret");
-    if (provided !== secret) {
-      return Response.json({ error: "Unauthorized." }, { status: 401 });
-    }
+  if (!isAuthorizedCaller(request)) {
+    return Response.json({ error: "Unauthorized." }, { status: 401 });
   }
 
   const result = await tick();
