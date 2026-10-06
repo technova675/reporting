@@ -91,6 +91,10 @@ export async function tick(): Promise<TickResult> {
 
   if (inFlight) return { ...empty, skipped: "A tick is already running." };
 
+  // Before the pause check: a job orphaned mid-run must be cleaned up even
+  // while the worker is paused, or it reads as "running" forever.
+  await recoverStaleJobs();
+
   const db = await read();
   if (!db.settings.enabled) {
     return { ...empty, skipped: "Automation is paused." };
@@ -150,20 +154,42 @@ export async function runJobNow(jobId: string): Promise<Outcome | null> {
 }
 
 /**
- * Atomically moves up to `limit` due jobs into `running` and returns them.
- *
- * Also sweeps jobs left `running` by a process that died mid-flight — without
- * this they would sit there forever, since nothing else ever moves them.
+ * When a running job last showed signs of life: its start, its latest log
+ * line, or the latest progress written to the record it works on.
  */
-function claimJobs(limit: number): Promise<Job[]> {
-  return write((db) => {
-    const at = Date.now();
+function lastActivity(db: Db, job: Job): number {
+  const times = [job.startedAt, job.log.at(-1)?.at];
+  times.push(db.audits.find((a) => a.id === job.subjectId)?.updatedAt);
+  times.push(db.scans.find((s) => s.id === job.subjectId)?.updatedAt);
+  return Math.max(0, ...times.map((t) => (t ? Date.parse(t) : 0)));
+}
 
-    for (const job of db.jobs) {
-      if (job.status !== "running") continue;
-      const startedAt = job.startedAt ? Date.parse(job.startedAt) : at;
-      if (at - startedAt < STALE_AFTER_MS) continue;
+function findStaleJobs(db: Db): Job[] {
+  const at = Date.now();
+  return db.jobs.filter(
+    (j) => j.status === "running" && at - lastActivity(db, j) >= STALE_AFTER_MS,
+  );
+}
 
+/**
+ * Sweeps jobs left `running` by a process that died mid-flight — a dev server
+ * restart, a crash, or a function hitting its time limit while working inside
+ * `after()`. Nothing else ever moves those jobs, so without this they sit
+ * there forever.
+ *
+ * Runs regardless of the pause switch. Console and outbound audits bypass that
+ * switch to start, so their recovery must bypass it too: those re-queued jobs
+ * are started again here rather than left for a worker that may be off.
+ *
+ * Reads first and only takes the write lock when something is stale, so it is
+ * cheap enough to call on every poll.
+ */
+export async function recoverStaleJobs(): Promise<void> {
+  if (findStaleJobs(await read()).length === 0) return;
+
+  const restart = await write((db) => {
+    const ids: string[] = [];
+    for (const job of findStaleJobs(db)) {
       // The attempt was already counted when it was claimed, so this either
       // retries or exhausts the job exactly as a thrown error would.
       if (job.attempts < job.maxAttempts) {
@@ -172,13 +198,35 @@ function claimJobs(limit: number): Promise<Job[]> {
         job.log.push(
           logLine("warn", "Previous attempt never finished — re-queued."),
         );
+        const audit = db.audits.find((a) => a.id === job.subjectId);
+        if (audit) {
+          audit.status = "queued";
+          audit.progressStep = 0;
+          audit.progressDetail = null;
+          audit.updatedAt = now();
+          // Public audits wait on the worker like any other; the rest were
+          // started by an operator and restart straight away.
+          if (audit.source !== "public") ids.push(job.id);
+        }
       } else {
+        const message = "Interrupted and out of attempts.";
         job.status = "failed";
         job.finishedAt = now();
-        job.error = "Interrupted and out of attempts.";
-        job.log.push(logLine("error", "Interrupted and out of attempts."));
+        job.error = message;
+        job.log.push(logLine("error", message));
+        markSubjectFailed(db, job, message);
       }
     }
+    return ids;
+  });
+
+  await Promise.all(restart.map((id) => runJobNow(id).catch(() => undefined)));
+}
+
+/** Atomically moves up to `limit` due jobs into `running` and returns them. */
+function claimJobs(limit: number): Promise<Job[]> {
+  return write((db) => {
+    const at = Date.now();
 
     const due = db.jobs
       .filter((j) => j.status === "queued" && Date.parse(j.runAfter) <= at)
@@ -263,37 +311,40 @@ async function failJob(job: Job, message: string): Promise<Outcome> {
       "error",
       `Giving up after ${j.attempts} attempts: ${message}`,
     );
-
-    // Surface the failure on the record the operator actually looks at.
-    const lead = db.leads.find((l) => l.id === j.subjectId);
-    if (lead) {
-      lead.stage = "failed";
-      lead.error = message;
-      lead.updatedAt = now();
-      lead.events.push({ at: now(), type: "research_failed", detail: message });
-    }
-    const audit = db.audits.find((a) => a.id === j.subjectId);
-    if (audit) {
-      audit.status = "failed";
-      audit.error = message;
-      audit.updatedAt = now();
-    }
-    const scan = db.scans.find((x) => x.id === j.subjectId);
-    if (scan) {
-      scan.status = "failed";
-      scan.error = message;
-      scan.updatedAt = now();
-      const watch = db.watches.find((w) => w.id === scan.watchId);
-      if (watch) {
-        watch.error = message;
-        watch.updatedAt = now();
-        // Do not leave a failed watch stuck: put it back on its cadence so the
-        // next scheduled run retries from a clean slate.
-        watch.nextRunAt = nextRunFor(watch);
-      }
-    }
+    markSubjectFailed(db, j, message);
     return "failed" as Outcome;
   });
+}
+
+/** Surfaces a job's failure on the record the operator actually looks at. */
+function markSubjectFailed(db: Db, j: Job, message: string): void {
+  const lead = db.leads.find((l) => l.id === j.subjectId);
+  if (lead) {
+    lead.stage = "failed";
+    lead.error = message;
+    lead.updatedAt = now();
+    lead.events.push({ at: now(), type: "research_failed", detail: message });
+  }
+  const audit = db.audits.find((a) => a.id === j.subjectId);
+  if (audit) {
+    audit.status = "failed";
+    audit.error = message;
+    audit.updatedAt = now();
+  }
+  const scan = db.scans.find((x) => x.id === j.subjectId);
+  if (scan) {
+    scan.status = "failed";
+    scan.error = message;
+    scan.updatedAt = now();
+    const watch = db.watches.find((w) => w.id === scan.watchId);
+    if (watch) {
+      watch.error = message;
+      watch.updatedAt = now();
+      // Do not leave a failed watch stuck: put it back on its cadence so the
+      // next scheduled run retries from a clean slate.
+      watch.nextRunAt = nextRunFor(watch);
+    }
+  }
 }
 
 /* ------------------------------------------------------------------ */

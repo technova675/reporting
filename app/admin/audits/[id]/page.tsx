@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { after } from "next/server";
 import { read } from "@/lib/db";
+import { recoverStaleJobs } from "@/lib/automation/engine";
 import { toPublicAudit } from "@/lib/publicAudit";
 import {
   AuditProgress,
@@ -22,6 +24,11 @@ export default async function AuditDetailPage({
 
   const view = toPublicAudit(audit, db.audits);
   const inFlight = audit.status === "queued" || audit.status === "running";
+  // This page refreshes itself while in flight, so it also clears a run that
+  // died mid-flight; the next refresh shows the restart or the failure.
+  if (audit.status === "running") {
+    after(() => recoverStaleJobs().catch(() => undefined));
+  }
 
   return (
     <div className={`auditor ${auditorFonts}`}>

@@ -1,6 +1,6 @@
 import { after } from "next/server";
 import { now, read, write } from "@/lib/db";
-import { enqueue, runJobNow } from "@/lib/automation/engine";
+import { enqueue, recoverStaleJobs, runJobNow } from "@/lib/automation/engine";
 
 export async function GET(
   _request: Request,
@@ -11,6 +11,9 @@ export async function GET(
   const audit = db.audits.find((a) => a.id === id);
   if (!audit) {
     return Response.json({ error: "Audit not found." }, { status: 404 });
+  }
+  if (audit.status === "running") {
+    after(() => recoverStaleJobs().catch(() => undefined));
   }
   return Response.json({ audit });
 }
@@ -30,9 +33,13 @@ export async function POST(
     found.progressStep = 0;
     found.progressDetail = null;
     found.updatedAt = now();
-    // Drop any job still waiting for this audit, or it runs a second time later.
+    // Drop any job still waiting on or orphaned by this audit, or the stale
+    // sweep picks it up and it runs a second time later.
     for (const stale of db.jobs) {
-      if (stale.subjectId === found.id && stale.status === "queued") {
+      if (
+        stale.subjectId === found.id &&
+        (stale.status === "queued" || stale.status === "running")
+      ) {
         stale.status = "cancelled";
         stale.finishedAt = now();
       }

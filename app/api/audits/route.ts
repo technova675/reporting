@@ -1,9 +1,12 @@
 import { after } from "next/server";
 import { now, read, write } from "@/lib/db";
-import { runJobNow } from "@/lib/automation/engine";
+import { recoverStaleJobs, runJobNow } from "@/lib/automation/engine";
 import { createAudit, parseAuditInputs } from "@/lib/auditRequests";
 
 export async function GET() {
+  // The console list is polled, so it doubles as the sweep that clears audits
+  // whose run died mid-flight.
+  after(() => recoverStaleJobs().catch(() => undefined));
   const db = await read();
   // The list view never needs the full category payload.
   return Response.json({
