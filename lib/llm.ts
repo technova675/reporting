@@ -61,6 +61,16 @@ export class LlmCallError extends Error {
   }
 }
 
+/** The caller's time budget ran out before the model answered. */
+export class LlmDeadlineError extends LlmCallError {
+  constructor() {
+    super(
+      `Ran out of time waiting on the model endpoint (${providerInfo().endpoint}).`,
+    );
+    this.name = "LlmDeadlineError";
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /* Chat completions                                                    */
 /* ------------------------------------------------------------------ */
@@ -94,10 +104,17 @@ interface Usage {
 }
 
 const REQUEST_TIMEOUT_MS = 180_000;
+/** Time held back from research so the report call still gets to run. */
+const REPORT_RESERVE_MS = 4 * 60_000;
 
+/**
+ * One chat call, retried on transient failures. Never runs past `deadline`
+ * (epoch ms): each request is cut off there and no retry starts after it.
+ */
 async function chat(
   body: Record<string, unknown>,
   usage: Usage,
+  deadline: number,
 ): Promise<NonNullable<ChatResponse["choices"]>[number]> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   const key = apiKey();
@@ -106,17 +123,21 @@ async function chat(
   // Free tiers rate-limit hard. Two short in-call retries save a whole job
   // attempt (and every search already done in it) on a single 429.
   for (let attempt = 0; ; attempt++) {
+    const left = deadline - Date.now();
+    if (left <= 0) throw new LlmDeadlineError();
+
     let res: Response;
     try {
       res = await fetch(`${baseUrl()}/chat/completions`, {
         method: "POST",
         headers,
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        signal: AbortSignal.timeout(Math.min(REQUEST_TIMEOUT_MS, left)),
       });
     } catch (err) {
+      if (Date.now() >= deadline) throw new LlmDeadlineError();
       if (attempt < 2) {
-        await sleep(3000 * (attempt + 1));
+        await sleep(3000 * (attempt + 1), deadline);
         continue;
       }
       throw new LlmCallError(
@@ -127,7 +148,11 @@ async function chat(
     }
 
     if (res.ok) {
-      const data = (await res.json()) as ChatResponse;
+      // The timeout signal also covers the body, so a stalled stream lands here.
+      const data = (await res.json().catch((err: unknown) => {
+        if (Date.now() >= deadline) throw new LlmDeadlineError();
+        throw err;
+      })) as ChatResponse;
       usage.tokensIn += data.usage?.prompt_tokens ?? 0;
       usage.tokensOut += data.usage?.completion_tokens ?? 0;
       const choice = data.choices?.[0];
@@ -145,6 +170,7 @@ async function chat(
         Number.isFinite(retryAfter) && retryAfter > 0
           ? Math.min(retryAfter, 30) * 1000
           : 4000 * (attempt + 1),
+        deadline,
       );
       continue;
     }
@@ -164,8 +190,10 @@ async function chat(
   }
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+/** Waits `ms`, but never past `deadline`. */
+function sleep(ms: number, deadline: number): Promise<void> {
+  const wait = Math.max(0, Math.min(ms, deadline - Date.now()));
+  return new Promise((resolve) => setTimeout(resolve, wait));
 }
 
 /** Reasoning models inline their thinking; none of it belongs in the output. */
@@ -230,6 +258,7 @@ async function runToolLoop(
   seed: Evidence,
   maxToolCalls: number,
   usage: Usage,
+  deadline: number,
   onProgress?: (message: string) => void,
 ): Promise<{ notes: string; gathered: Evidence }> {
   const gathered: Evidence = { entries: [], sources: [] };
@@ -264,8 +293,11 @@ You are in the RESEARCH phase. Use the web_search and fetch_page tools to check 
           ...(budgetLeft > 0 ? { tools: TOOLS, tool_choice: "auto" } : {}),
         },
         usage,
+        deadline,
       );
     } catch (err) {
+      // Out of research time: write the report from what was gathered so far.
+      if (err instanceof LlmDeadlineError) return { notes: "", gathered };
       // Some models or providers reject `tools` outright. Fall back to the
       // pre-gathered evidence rather than failing the job.
       if (err instanceof LlmCallError && (err.status === 400 || err.status === 422)) {
@@ -387,6 +419,7 @@ async function formatJson<T>(
   userContent: string,
   schema: Record<string, unknown>,
   usage: Usage,
+  deadline: number,
 ): Promise<T> {
   const messages: ChatMessage[] = [
     {
@@ -416,6 +449,7 @@ ${JSON.stringify(schema)}`,
           ...jsonModeParams(mode, schema),
         },
         usage,
+        deadline,
       );
       if (choice.finish_reason === "length") {
         throw new LlmCallError(
@@ -459,6 +493,7 @@ ${JSON.stringify(schema)}`,
         ...jsonModeParams(jsonModeFor.get(model) ?? "none", schema),
       },
       usage,
+      deadline,
     );
     const repaired = parseJson(visibleText(choice.message?.content));
     if (repaired !== undefined) {
@@ -574,6 +609,12 @@ interface ResearchOptions {
   /** Observations collected in code before the model is involved. */
   evidence?: Evidence;
   onProgress?: (message: string) => void;
+  /**
+   * Epoch ms the whole pass must finish by. Research stops early enough to
+   * leave the report call time to run; past it, the pass throws
+   * LlmDeadlineError instead of hanging.
+   */
+  deadline?: number;
 }
 
 export async function researchJson<T>({
@@ -584,6 +625,7 @@ export async function researchJson<T>({
   maxSearches = 6,
   evidence = { entries: [], sources: [] },
   onProgress,
+  deadline = Infinity,
 }: ResearchOptions): Promise<ResearchResult<T>> {
   const started = Date.now();
   const usage: Usage = { tokensIn: 0, tokensOut: 0 };
@@ -595,6 +637,7 @@ export async function researchJson<T>({
     evidence,
     maxSearches,
     usage,
+    deadline - REPORT_RESERVE_MS,
     onProgress,
   );
 
@@ -616,6 +659,7 @@ ${notes ? `RESEARCH NOTES:\n${truncate(notes, 12_000)}` : "RESEARCH NOTES: none 
 Base every claim on the evidence and notes above. Where they do not cover something, say it could not be verified — do not fill the gap from memory.`,
     schema,
     usage,
+    deadline,
   );
 
   return {

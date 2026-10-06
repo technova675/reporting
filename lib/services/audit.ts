@@ -16,6 +16,14 @@ import type { AuditCategory, AuditInputs, Finding, Priority } from "../types";
 
 const CATEGORY_KEYS = AUDIT_CATEGORIES.map((c) => c.key);
 
+/**
+ * Wall-clock budget for one audit attempt. It must sit under `maxDuration` on
+ * the routes that start audits (800s), or the platform kills the function
+ * mid-run with no error recorded; this way a slow model fails the attempt
+ * cleanly and the job retries.
+ */
+const AUDIT_TIME_BUDGET_MS = 11 * 60_000;
+
 const FINDING_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -246,6 +254,7 @@ export async function runAudit(
     // On top of the pre-gathered evidence: competitors, social, category terms.
     maxSearches: 6,
     evidence,
+    deadline: started + AUDIT_TIME_BUDGET_MS,
     onProgress: (detail) => {
       if (detail === "Writing the report") reportStarted = true;
       void progress(reportStarted ? 6 : 5, detail);

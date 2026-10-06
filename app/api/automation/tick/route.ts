@@ -2,6 +2,9 @@ import { read } from "@/lib/db";
 import { hasPendingWork, tick } from "@/lib/automation/engine";
 import { computeStats } from "@/lib/stats";
 
+// A tick can run a whole audit inside this request. Keep the limit above the audit's own budget (AUDIT_TIME_BUDGET_MS in lib/services/audit.ts).
+export const maxDuration = 800;
+
 /**
  * Drives the queue forward by one pass.
  *

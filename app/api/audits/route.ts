@@ -3,6 +3,10 @@ import { now, read, write } from "@/lib/db";
 import { recoverStaleJobs, runJobNow } from "@/lib/automation/engine";
 import { createAudit, parseAuditInputs } from "@/lib/auditRequests";
 
+// Audits run inside after(), which shares this route's time limit. Keep it
+// above the audit's own budget (AUDIT_TIME_BUDGET_MS in lib/services/audit.ts).
+export const maxDuration = 800;
+
 export async function GET() {
   // The console list is polled, so it doubles as the sweep that clears audits
   // whose run died mid-flight.

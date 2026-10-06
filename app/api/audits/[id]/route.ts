@@ -2,6 +2,10 @@ import { after } from "next/server";
 import { now, read, write } from "@/lib/db";
 import { enqueue, recoverStaleJobs, runJobNow } from "@/lib/automation/engine";
 
+// Audits run inside after(), which shares this route's time limit. Keep it
+// above the audit's own budget (AUDIT_TIME_BUDGET_MS in lib/services/audit.ts).
+export const maxDuration = 800;
+
 export async function GET(
   _request: Request,
   ctx: RouteContext<"/api/audits/[id]">,
@@ -12,7 +16,7 @@ export async function GET(
   if (!audit) {
     return Response.json({ error: "Audit not found." }, { status: 404 });
   }
-  if (audit.status === "running") {
+  if (audit.status === "queued" || audit.status === "running") {
     after(() => recoverStaleJobs().catch(() => undefined));
   }
   return Response.json({ audit });

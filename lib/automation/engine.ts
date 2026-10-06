@@ -178,16 +178,37 @@ function findStaleJobs(db: Db): Job[] {
  * there forever.
  *
  * Runs regardless of the pause switch. Console and outbound audits bypass that
- * switch to start, so their recovery must bypass it too: those re-queued jobs
- * are started again here rather than left for a worker that may be off.
+ * switch to start, so their recovery must bypass it too: those re-queued jobs,
+ * and any of their retries that are due, are started here rather than left for
+ * a worker that may be off.
  *
  * Reads first and only takes the write lock when something is stale, so it is
  * cheap enough to call on every poll.
  */
 export async function recoverStaleJobs(): Promise<void> {
-  if (findStaleJobs(await read()).length === 0) return;
+  const snapshot = await read();
+  // runJobNow claims under the write lock, so starting one twice is harmless.
+  const restart = dueOperatorAudits(snapshot).map((j) => j.id);
+  if (findStaleJobs(snapshot).length > 0) restart.push(...(await requeueStaleJobs()));
 
-  const restart = await write((db) => {
+  await Promise.all(restart.map((id) => runJobNow(id).catch(() => undefined)));
+}
+
+/** Console and outbound audit jobs waiting to run, due retries included. */
+function dueOperatorAudits(db: Db): Job[] {
+  const at = Date.now();
+  return db.jobs.filter(
+    (j) =>
+      j.kind === "run_audit" &&
+      j.status === "queued" &&
+      Date.parse(j.runAfter) <= at &&
+      db.audits.some((a) => a.id === j.subjectId && a.source !== "public"),
+  );
+}
+
+/** Retries or fails every stale job; returns the ids to restart right away. */
+function requeueStaleJobs(): Promise<string[]> {
+  return write((db) => {
     const ids: string[] = [];
     for (const job of findStaleJobs(db)) {
       // The attempt was already counted when it was claimed, so this either
@@ -219,8 +240,6 @@ export async function recoverStaleJobs(): Promise<void> {
     }
     return ids;
   });
-
-  await Promise.all(restart.map((id) => runJobNow(id).catch(() => undefined)));
 }
 
 /** Atomically moves up to `limit` due jobs into `running` and returns them. */
@@ -293,6 +312,14 @@ async function failJob(job: Job, message: string): Promise<Outcome> {
       j.status = "queued";
       j.runAfter = new Date(Date.now() + delay).toISOString();
       j.error = message;
+      // Show the audit as waiting, not as a run that froze mid-step.
+      const audit = db.audits.find((a) => a.id === j.subjectId);
+      if (audit) {
+        audit.status = "queued";
+        audit.progressStep = 0;
+        audit.progressDetail = null;
+        audit.updatedAt = now();
+      }
       appendLog(
         db,
         job.id,

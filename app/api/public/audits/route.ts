@@ -10,6 +10,10 @@ import {
   takeRateLimit,
 } from "@/lib/publicAccess";
 
+// Audits run inside after(), which shares this route's time limit. Keep it
+// above the audit's own budget (AUDIT_TIME_BUDGET_MS in lib/services/audit.ts).
+export const maxDuration = 800;
+
 /**
  * The public intake for the free audit — what /audit and the standalone
  * embed post to. Returns only the new audit's id; the report is fetched from

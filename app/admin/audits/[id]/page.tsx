@@ -14,6 +14,10 @@ import { AuditStatusTag, Tag, relativeTime } from "@/components/ui";
 import { RequeueButton } from "@/components/RequeueButton";
 import { AutoRefresh } from "@/components/AutoRefresh";
 
+// Audits run inside after(), which shares this route's time limit. Keep it
+// above the audit's own budget (AUDIT_TIME_BUDGET_MS in lib/services/audit.ts).
+export const maxDuration = 800;
+
 export default async function AuditDetailPage({
   params,
 }: PageProps<"/admin/audits/[id]">) {
@@ -25,8 +29,8 @@ export default async function AuditDetailPage({
   const view = toPublicAudit(audit, db.audits);
   const inFlight = audit.status === "queued" || audit.status === "running";
   // This page refreshes itself while in flight, so it also clears a run that
-  // died mid-flight; the next refresh shows the restart or the failure.
-  if (audit.status === "running") {
+  // died mid-flight and starts due retries; the next refresh shows the outcome.
+  if (inFlight) {
     after(() => recoverStaleJobs().catch(() => undefined));
   }
 

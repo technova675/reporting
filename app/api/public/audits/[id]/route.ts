@@ -4,6 +4,10 @@ import { tick } from "@/lib/automation/engine";
 import { toPublicAudit } from "@/lib/publicAudit";
 import { corsHeaders } from "@/lib/publicAccess";
 
+// Audits run inside after(), which shares this route's time limit. Keep it
+// above the audit's own budget (AUDIT_TIME_BUDGET_MS in lib/services/audit.ts).
+export const maxDuration = 800;
+
 export function OPTIONS(request: Request) {
   return new Response(null, { status: 204, headers: corsHeaders(request) });
 }
