@@ -42,3 +42,7 @@ next-env.d.ts
 
 # Local data store
 /data
+
+
+# Local screenshots
+/Screenshot 2026-09-27 155401.png
