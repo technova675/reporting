@@ -40,6 +40,17 @@ function isLocalEndpoint(): boolean {
   return /\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(:|\/)/.test(baseUrl());
 }
 
+/**
+ * NVIDIA's hosted models think out loud by default. That thinking is slow and
+ * counts against max_tokens, so it truncated report JSON; this switches it
+ * off. Only sent there, since other providers may reject unknown parameters.
+ */
+function providerParams(): Record<string, unknown> {
+  return /\/\/integrate\.api\.nvidia\.com\//.test(`${baseUrl()}/`)
+    ? { chat_template_kwargs: { enable_thinking: false } }
+    : {};
+}
+
 /** A local server (Ollama, LM Studio, a NIM container) needs no key. */
 export function isLlmConfigured(): boolean {
   return Boolean(apiKey()) || isLocalEndpoint();
@@ -107,6 +118,8 @@ interface Usage {
 }
 
 const REQUEST_TIMEOUT_MS = 180_000;
+/** How long before its deadline research stops searching and writes notes. */
+const WRAP_UP_MS = 45_000;
 /** Time a single-pass researchJson holds back so the report still gets to run. */
 const REPORT_RESERVE_MS = 120_000;
 
@@ -134,7 +147,7 @@ async function chat(
       res = await fetch(`${baseUrl()}/chat/completions`, {
         method: "POST",
         headers,
-        body: JSON.stringify(body),
+        body: JSON.stringify({ ...providerParams(), ...body }),
         signal: AbortSignal.timeout(Math.min(REQUEST_TIMEOUT_MS, left)),
       });
     } catch (err) {
@@ -283,8 +296,21 @@ You are in the RESEARCH phase. Use the web_search and fetch_page tools to check 
   ];
 
   let used = 0;
+  let wrappingUp = false;
   for (let round = 0; round < maxToolCalls + 2; round++) {
-    const budgetLeft = maxToolCalls - used;
+    // Near the deadline, stop offering tools and ask for the notes, or the
+    // cut-off lands mid-search and every observation in them is lost.
+    if (!wrappingUp && deadline - Date.now() < WRAP_UP_MS) {
+      wrappingUp = true;
+      if (round > 0) {
+        messages.push({
+          role: "user",
+          content:
+            "Research time is up. Write your research notes now, with the URL for each observation.",
+        });
+      }
+    }
+    const budgetLeft = wrappingUp ? 0 : maxToolCalls - used;
     let choice;
     try {
       choice = await chat(
@@ -325,8 +351,8 @@ You are in the RESEARCH phase. Use the web_search and fetch_page tools to check 
       let output: string;
       if (used >= maxToolCalls) {
         output = "Tool budget exhausted. Write your research notes now.";
-      } else if (Date.now() >= deadline) {
-        // Each tool can take up to a minute; none may start once time is up.
+      } else if (deadline - Date.now() < WRAP_UP_MS) {
+        // A tool can take most of a minute; none may eat into the notes' time.
         output = "Out of research time. Write your research notes now.";
       } else {
         used += 1;
