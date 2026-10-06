@@ -24,7 +24,10 @@ export const DEFAULT_MODEL =
   process.env.LLM_MODEL?.trim() || "nvidia/nemotron-3-super-120b-a12b";
 
 function baseUrl(): string {
-  return (process.env.LLM_BASE_URL?.trim() || DEFAULT_BASE_URL).replace(/\/$/, "");
+  return (process.env.LLM_BASE_URL?.trim() || DEFAULT_BASE_URL)
+    .replace(/\/$/, "")
+    // A full endpoint URL is an easy mistake; chat() adds the path itself.
+    .replace(/\/chat\/completions$/, "");
 }
 
 function apiKey(): string | undefined {

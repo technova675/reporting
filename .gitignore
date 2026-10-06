@@ -46,3 +46,7 @@ next-env.d.ts
 
 # Local screenshots
 /Screenshot 2026-09-27 155401.png
+/WhatsApp Image *.jpeg
+
+# Local API keys
+/new.txt

@@ -1,8 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { after } from "next/server";
 import { read } from "@/lib/db";
-import { recoverStaleJobs } from "@/lib/automation/engine";
 import { toPublicAudit } from "@/lib/publicAudit";
 import {
   AuditProgress,
@@ -14,10 +12,6 @@ import { AuditStatusTag, Tag, relativeTime } from "@/components/ui";
 import { RequeueButton } from "@/components/RequeueButton";
 import { AutoRefresh } from "@/components/AutoRefresh";
 
-// Audit phases run inside after(), which shares this route's time limit: 300s,
-// the Vercel Hobby maximum. Each phase's budget in lib/services/audit.ts sits under it.
-export const maxDuration = 300;
-
 export default async function AuditDetailPage({
   params,
 }: PageProps<"/admin/audits/[id]">) {
@@ -28,11 +22,6 @@ export default async function AuditDetailPage({
 
   const view = toPublicAudit(audit, db.audits);
   const inFlight = audit.status === "queued" || audit.status === "running";
-  // This page refreshes itself while in flight, so it also clears a run that
-  // died mid-flight and starts due retries; the next refresh shows the outcome.
-  if (inFlight) {
-    after(() => recoverStaleJobs().catch(() => undefined));
-  }
 
   return (
     <div className={`auditor ${auditorFonts}`}>
@@ -77,7 +66,8 @@ export default async function AuditDetailPage({
 
       {inFlight && (
         <>
-          <AutoRefresh />
+          {/* The ping is what restarts a retry or a run that died mid-flight. */}
+          <AutoRefresh pingUrl={`/api/audits/${audit.id}`} />
           <AuditProgress
             step={view.progressStep}
             detail={view.progressDetail}
